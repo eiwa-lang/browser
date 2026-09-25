@@ -1,0 +1,58 @@
+// Console events (MVP, §18) and challenge payloads (post-MVP, §19).
+
+import { JsonValue } from "std.json"
+
+type ConsoleEvent(
+    val page: String,
+    val kind: String,
+    val text: String
+)
+
+fun parseConsole(params: JsonValue): ConsoleEvent? {
+    val page = params.get("page")
+    val kind = params.get("kind")
+    val text = params.get("text")
+    if (page == null || kind == null || text == null) {
+        return null
+    }
+    if (page!!.isString() == false || kind!!.isString() == false) {
+        return null
+    }
+    if (text!!.isString() == false) {
+        return null
+    }
+    return ConsoleEvent(page!!.asString(), kind!!.asString(), text!!.asString())
+}
+
+fun validChallengeType(t: String): Bool {
+    return t == "captcha" || t == "authenticationRequired" || t == "accessDenied" || t == "rateLimited" || t == "humanVerification" || t == "unknown"
+}
+
+type Challenge(
+    val id: String,
+    val kind: String,
+    val page: String,
+    val context: String,
+    val url: String
+)
+
+fun parseChallenge(params: JsonValue): Challenge? {
+    val id = params.get("challenge")
+    val kind = params.get("type")
+    val page = params.get("page")
+    val context = params.get("context")
+    val url = params.get("url")
+    if (id == null || kind == null || page == null || context == null || url == null) {
+        return null
+    }
+    if (id!!.isString() == false || kind!!.isString() == false) {
+        return null
+    }
+    if (page!!.isString() == false || context!!.isString() == false) {
+        return null
+    }
+    if (url!!.isString() == false || validChallengeType(kind!!.asString()) == false) {
+        return null
+    }
+    return Challenge(id!!.asString(), kind!!.asString(), page!!.asString(), context!!.asString(), url!!.asString())
+}

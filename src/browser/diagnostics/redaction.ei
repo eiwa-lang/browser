@@ -1,0 +1,40 @@
+// Secret redaction for logs and traces (§§35, 38).
+//
+// Header names compare case-insensitively; values of sensitive headers
+// become "***". Non-sensitive entries pass through untouched.
+
+import { NativeMemory } from "std.core"
+import { MutableMap } from "std.collections"
+
+fun lowerName(name: String): String {
+    val buf = Standard.gcMalloc(name.length + 1)
+    var i = 0
+    while (i < name.length) {
+        val b = NativeMemory.readByte(name.ptr!!, i)
+        if (b >= 65 && b <= 90) {
+            NativeMemory.writeByte(buf, i, b + 32)
+        } else {
+            NativeMemory.writeByte(buf, i, b)
+        }
+        i = i + 1
+    }
+    NativeMemory.writeByte(buf, name.length, 0)
+    return String(buf, name.length)
+}
+
+fun sensitiveHeader(name: String): Bool {
+    val lower = lowerName(name)
+    return lower == "authorization" || lower == "cookie" || lower == "set-cookie" || lower == "x-auth-token" || lower == "proxy-authorization"
+}
+
+fun redactHeaders(headers: Map<String, String>): Map<String, String> {
+    val out: MutableMap<String, String> = MutableMap<String, String>()
+    for (headers) { entry ->
+        if (sensitiveHeader(entry.key)) {
+            out.put(entry.key, "***")
+        } else {
+            out.put(entry.key, entry.value)
+        }
+    }
+    return out.freeze()
+}

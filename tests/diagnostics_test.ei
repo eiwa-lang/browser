@@ -1,0 +1,46 @@
+import { assert } from "std.core"
+import { MutableMap } from "std.collections"
+import { parseJson } from "std.json"
+import { lowerName, sensitiveHeader, redactHeaders } from ".browser.diagnostics.redaction"
+import { parseConsole, parseChallenge, validChallengeType } from ".browser.challenge.challenge"
+
+test "diagnostics: header names match case-insensitively" {
+    assert(lowerName("Authorization") == "authorization")
+    assert(lowerName("X-Auth-Token") == "x-auth-token")
+    assert(sensitiveHeader("authorization"))
+    assert(sensitiveHeader("Authorization"))
+    assert(sensitiveHeader("COOKIE"))
+    assert(sensitiveHeader("Set-Cookie"))
+    assert(sensitiveHeader("content-type") == false)
+    assert(sensitiveHeader("x-request-id") == false)
+}
+
+test "diagnostics: redaction keeps keys and drops secrets" {
+    val headers: MutableMap<String, String> = MutableMap<String, String>()
+    headers.put("Content-Type", "application/json")
+    headers.put("Authorization", "Bearer secret")
+    headers.put("Cookie", "sess=abc")
+    val clean = redactHeaders(headers.freeze())
+    assert(clean.get("Content-Type") == "application/json")
+    assert(clean.get("Authorization") == "***")
+    assert(clean.get("Cookie") == "***")
+    assert(clean.size() == 3)
+}
+
+test "diagnostics: console events parse" {
+    val ev = parseConsole(parseJson("{\"page\": \"page-7\", \"kind\": \"log\", \"text\": \"hello\"}"))!!
+    assert(ev.kind == "log")
+    assert(ev.text == "hello")
+    assert(parseConsole(parseJson("{\"page\": \"page-7\"}")) == null)
+}
+
+test "diagnostics: challenge payloads validate type" {
+    assert(validChallengeType("captcha"))
+    assert(validChallengeType("humanVerification"))
+    assert(validChallengeType("unknown"))
+    assert(validChallengeType("solver") == false)
+    val ch = parseChallenge(parseJson("{\"challenge\": \"ch-9\", \"type\": \"captcha\", \"page\": \"page-7\", \"context\": \"ctx-3\", \"url\": \"https://example.com\"}"))!!
+    assert(ch.id == "ch-9")
+    assert(ch.context == "ctx-3")
+    assert(parseChallenge(parseJson("{\"challenge\": \"ch-9\", \"type\": \"solver\"}")) == null)
+}
