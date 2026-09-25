@@ -406,6 +406,9 @@ role selector
 attribute selector
 ```
 
+On the wire a locator serializes as `{"strategy", "selector"}` with
+`strategy` one of `css`, `xpath`, `text`, `role`.
+
 Future locator strategies MAY include:
 
 -   accessibility role;
@@ -1399,6 +1402,9 @@ evaluationTimeout
 downloadTimeout
 challengeTimeout   (post-MVP, max wait for onChallenge decision)
 ```
+
+Every category defaults to 30000ms unless overridden. Operation-level
+configuration SHALL override broader configuration.
 
 Timeouts SHALL be configurable at:
 

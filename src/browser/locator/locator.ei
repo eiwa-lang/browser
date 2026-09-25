@@ -1,0 +1,51 @@
+// Locator (§7): strategy + selector, serialized as
+// `{"strategy": ..., "selector": ...}` inside command params.
+
+import { MutableMap } from "std.collections"
+import { JsonValue, jsonObject, jsonString } from "std.json"
+
+type Locator(val strategy: String, val selector: String) {
+
+    fun param(): String {
+        return locatorValue(this).write()
+    }
+}
+
+fun locatorValue(loc: Locator): JsonValue {
+    val m = MutableMap<String, JsonValue>()
+    m.put("strategy", jsonString(loc.strategy))
+    m.put("selector", jsonString(loc.selector))
+    return jsonObject(m.freeze())
+}
+
+fun css(selector: String): Locator {
+    return Locator("css", selector)
+}
+
+fun xpath(selector: String): Locator {
+    return Locator("xpath", selector)
+}
+
+fun textSelector(value: String): Locator {
+    return Locator("text", value)
+}
+
+fun roleSelector(value: String): Locator {
+    return Locator("role", value)
+}
+
+fun parseLocator(raw: String): Locator {
+    if (raw.indexOf("xpath=") == 0) {
+        return xpath(raw.substring(6, raw.length))
+    }
+    if (raw.indexOf("text=") == 0) {
+        return textSelector(raw.substring(5, raw.length))
+    }
+    if (raw.indexOf("role=") == 0) {
+        return roleSelector(raw.substring(5, raw.length))
+    }
+    if (raw.indexOf("//") == 0 || raw.indexOf("(//") == 0) {
+        return xpath(raw)
+    }
+    return css(raw)
+}

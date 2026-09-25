@@ -1,0 +1,41 @@
+// Timeout scopes (§34).
+//
+// Categories: defaultTimeout, navigationTimeout, actionTimeout,
+// evaluationTimeout, downloadTimeout, challengeTimeout. Every category
+// defaults to 30000ms unless overridden. Resolution walks scopes from
+// most specific (operation) to least (browser); callers pass
+// [operation, page, context, browser].
+
+import { MutableMap } from "std.collections"
+
+fun builtinTimeout(category: String): Int {
+    return 30000
+}
+
+type TimeoutConfig(val values: MutableMap<String, Int> = MutableMap<String, Int>()) {
+
+    fun set(category: String, ms: Int): Void {
+        this.values.put(category, ms)
+    }
+
+    fun get(category: String): Int {
+        val v = this.values.get(category)
+        if (v == null) {
+            return builtinTimeout(category)
+        }
+        return v!!
+    }
+}
+
+fun resolveTimeout(category: String, scopes: List<TimeoutConfig>): Int {
+    var i = 0
+    while (i < scopes.size()) {
+        val v = scopes.get(i).values.get(category)
+        if (v == null) {
+            i = i + 1
+        } else {
+            return v!!
+        }
+    }
+    return builtinTimeout(category)
+}

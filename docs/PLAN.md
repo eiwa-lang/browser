@@ -43,13 +43,11 @@ tested (32/32).
 
 ## Phase 3 — Basic Automation (MVP)
 
-- [ ] Navigation: `goto/reload/goBack/goForward` + `waitUntil` + timeouts (§9)
-- [ ] Actions: `click/fill/type/press` with auto-wait (§8)
-- [ ] `text/content/attribute`, `innerText/innerHtml` (§6.3)
-- [ ] `waitFor/waitForUrl` + `defaultTimeout/navigationTimeout/actionTimeout` (§34)
-- [ ] `evaluate` (primitives/JSON/arrays/serialized errors) (§10)
-- [ ] CSS/XPath/text/role/attribute locator strategies (§7)
-- [ ] Explicit lifecycle in examples (`page.close()` before `context.close()`) (§32)
+- [x] `Locator` strategies + `{"strategy", "selector"}` wire form (§7)
+- [x] Typed command builders for the MVP surface (§§6.3, 9, 45)
+- [x] `TimeoutConfig` + most-specific-wins resolution, 30000ms default (§34)
+- [x] `waitUntil` validation (`commit/domcontentloaded/load/networkidle`) (§9)
+- [ ] Execution against a live engine (needs Phase 2 transport)
 
 ## Phase 4 — Network Observe (MVP)
 

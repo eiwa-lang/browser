@@ -1,0 +1,98 @@
+import { assert } from "std.core"
+import { parseJson } from "std.json"
+import { css, xpath, textSelector, roleSelector, parseLocator } from ".browser.locator.locator"
+import { TimeoutConfig, builtinTimeout, resolveTimeout } from ".browser.timeouts"
+import { validWaitUntil, gotoCmd, reloadCmd, goBackCmd, clickCmd, fillCmd, pressCmd, textCmd, contentCmd, attributeCmd, waitForCmd, waitForUrlCmd, evaluateCmd } from ".browser.protocol.commands"
+import { parseFrame } from ".browser.protocol.envelope"
+
+test "automation: locator strategies and parsing" {
+    assert(css("#id").strategy == "css")
+    assert(xpath("//a").strategy == "xpath")
+    assert(textSelector("ok").strategy == "text")
+    assert(roleSelector("button").strategy == "role")
+    assert(parseLocator("#id").strategy == "css")
+    assert(parseLocator("xpath=//a").selector == "//a")
+    assert(parseLocator("text=ok").strategy == "text")
+    assert(parseLocator("role=button").strategy == "role")
+    assert(parseLocator("//a").strategy == "xpath")
+    assert(parseLocator("(//a)[1]").strategy == "xpath")
+    val p = parseLocator("#process").param()
+    val root = parseJson(p)
+    assert(root.get("strategy")!!.asString() == "css")
+    assert(root.get("selector")!!.asString() == "#process")
+}
+
+test "automation: timeouts resolve most-specific first" {
+    assert(builtinTimeout("actionTimeout") == 30000)
+    val browser = TimeoutConfig()
+    val ctx = TimeoutConfig()
+    val page = TimeoutConfig()
+    val op = TimeoutConfig()
+    assert(resolveTimeout("navigationTimeout", [op, page, ctx, browser]) == 30000)
+    browser.set("navigationTimeout", 10000)
+    assert(resolveTimeout("navigationTimeout", [op, page, ctx, browser]) == 10000)
+    page.set("navigationTimeout", 5000)
+    assert(resolveTimeout("navigationTimeout", [op, page, ctx, browser]) == 5000)
+    op.set("navigationTimeout", 1000)
+    assert(resolveTimeout("navigationTimeout", [op, page, ctx, browser]) == 1000)
+    assert(resolveTimeout("actionTimeout", [op, page, ctx, browser]) == 30000)
+    val solo = TimeoutConfig()
+    solo.set("defaultTimeout", 7000)
+    assert(solo.get("defaultTimeout") == 7000)
+    assert(solo.get("actionTimeout") == 30000)
+}
+
+test "automation: goto validates url and load state" {
+    assert(validWaitUntil("load"))
+    assert(validWaitUntil("networkidle"))
+    assert(validWaitUntil("fast") == false)
+    val raw = gotoCmd(1, "page-7", "https://example.com", "load", 30000)!!
+    val rpc = parseFrame(raw)
+    assert(rpc.method == "page.goto")
+    assert(rpc.argumentString("url") == "https://example.com")
+    assert(rpc.argumentString("waitUntil") == "load")
+    assert(rpc.argumentInt("timeoutMs") == 30000)
+    assert(gotoCmd(1, "page-7", "", "load", 30000) == null)
+    assert(gotoCmd(1, "", "https://example.com", "load", 30000) == null)
+    assert(gotoCmd(1, "page-7", "https://example.com", "fast", 30000) == null)
+}
+
+test "automation: dom commands carry the locator object" {
+    val loc = css("#search")
+    val click = parseFrame(clickCmd(2, "page-7", loc)!!)
+    assert(click.method == "page.click")
+    assert(click.argumentString("page") == "page-7")
+    assert(click.params.get("locator")!!.get("strategy")!!.asString() == "css")
+    val fill = parseFrame(fillCmd(3, "page-7", loc, "123")!!)
+    assert(fill.method == "page.fill")
+    assert(fill.params.get("value")!!.asString() == "123")
+    assert(fillCmd(3, "page-7", css(""), "123") == null)
+    val press = parseFrame(pressCmd(4, "page-7", loc, "Enter")!!)
+    assert(press.argumentString("key") == "Enter")
+    assert(pressCmd(4, "page-7", loc, "") == null)
+    val text = parseFrame(textCmd(5, "page-7", loc)!!)
+    assert(text.method == "page.text")
+    val content = parseFrame(contentCmd(6, "page-7")!!)
+    assert(content.method == "page.content")
+    val attr = parseFrame(attributeCmd(7, "page-7", loc, "href")!!)
+    assert(attr.argumentString("name") == "href")
+    assert(attributeCmd(7, "page-7", loc, "") == null)
+}
+
+test "automation: waits and evaluate" {
+    val wait = parseFrame(waitForCmd(8, "page-7", ".result", 5000)!!)
+    assert(wait.method == "page.waitFor")
+    assert(wait.argumentString("selector") == ".result")
+    assert(wait.argumentInt("timeoutMs") == 5000)
+    assert(waitForCmd(8, "page-7", "", 5000) == null)
+    val url = parseFrame(waitForUrlCmd(9, "page-7", "**/result/**", 5000)!!)
+    assert(url.method == "page.waitForUrl")
+    assert(url.argumentString("pattern") == "**/result/**")
+    val evil = "() => document.querySelector(\"h1\").textContent"
+    val ev = parseFrame(evaluateCmd(10, "page-7", evil)!!)
+    assert(ev.method == "page.evaluate")
+    assert(ev.argumentString("script") == evil)
+    assert(evaluateCmd(10, "page-7", "") == null)
+    assert(reloadCmd(11, "page-7") != null)
+    assert(goBackCmd(12, "") == null)
+}

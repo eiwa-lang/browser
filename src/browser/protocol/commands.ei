@@ -1,0 +1,161 @@
+// Typed JSON-RPC command builders (MVP surface in §45).
+//
+// Single place where method names and params are defined; `requestFrame`
+// does the envelope. Builders return null on invalid input instead of
+// emitting a malformed frame.
+
+import { MutableMap } from "std.collections"
+import { JsonValue, jsonObject, jsonString, jsonNumber } from "std.json"
+import { requestFrame } from ".browser.protocol.envelope"
+import { Locator, locatorValue } from ".browser.locator.locator"
+
+fun validWaitUntil(v: String): Bool {
+    return v == "commit" || v == "domcontentloaded" || v == "load" || v == "networkidle"
+}
+
+fun gotoCmd(id: Int, page: String, url: String, waitUntil: String, timeoutMs: Int): String? {
+    if (page == "" || url == "") {
+        return null
+    }
+    if (validWaitUntil(waitUntil) == false) {
+        return null
+    }
+    val params = MutableMap<String, JsonValue>()
+    params.put("page", jsonString(page))
+    params.put("url", jsonString(url))
+    params.put("waitUntil", jsonString(waitUntil))
+    params.put("timeoutMs", jsonNumber(timeoutMs.toDouble()))
+    return requestFrame(id, "page.goto", jsonObject(params.freeze()).write())
+}
+
+fun reloadCmd(id: Int, page: String): String? {
+    if (page == "") {
+        return null
+    }
+    val params = MutableMap<String, JsonValue>()
+    params.put("page", jsonString(page))
+    return requestFrame(id, "page.reload", jsonObject(params.freeze()).write())
+}
+
+fun goBackCmd(id: Int, page: String): String? {
+    if (page == "") {
+        return null
+    }
+    val params = MutableMap<String, JsonValue>()
+    params.put("page", jsonString(page))
+    return requestFrame(id, "page.goBack", jsonObject(params.freeze()).write())
+}
+
+fun goForwardCmd(id: Int, page: String): String? {
+    if (page == "") {
+        return null
+    }
+    val params = MutableMap<String, JsonValue>()
+    params.put("page", jsonString(page))
+    return requestFrame(id, "page.goForward", jsonObject(params.freeze()).write())
+}
+
+fun clickCmd(id: Int, page: String, loc: Locator): String? {
+    if (page == "" || loc.selector == "") {
+        return null
+    }
+    val params = MutableMap<String, JsonValue>()
+    params.put("page", jsonString(page))
+    params.put("locator", locatorValue(loc))
+    return requestFrame(id, "page.click", jsonObject(params.freeze()).write())
+}
+
+fun fillCmd(id: Int, page: String, loc: Locator, value: String): String? {
+    if (page == "" || loc.selector == "") {
+        return null
+    }
+    val params = MutableMap<String, JsonValue>()
+    params.put("page", jsonString(page))
+    params.put("locator", locatorValue(loc))
+    params.put("value", jsonString(value))
+    return requestFrame(id, "page.fill", jsonObject(params.freeze()).write())
+}
+
+fun typeCmd(id: Int, page: String, loc: Locator, value: String): String? {
+    if (page == "" || loc.selector == "") {
+        return null
+    }
+    val params = MutableMap<String, JsonValue>()
+    params.put("page", jsonString(page))
+    params.put("locator", locatorValue(loc))
+    params.put("value", jsonString(value))
+    return requestFrame(id, "page.type", jsonObject(params.freeze()).write())
+}
+
+fun pressCmd(id: Int, page: String, loc: Locator, key: String): String? {
+    if (page == "" || loc.selector == "" || key == "") {
+        return null
+    }
+    val params = MutableMap<String, JsonValue>()
+    params.put("page", jsonString(page))
+    params.put("locator", locatorValue(loc))
+    params.put("key", jsonString(key))
+    return requestFrame(id, "page.press", jsonObject(params.freeze()).write())
+}
+
+fun textCmd(id: Int, page: String, loc: Locator): String? {
+    if (page == "" || loc.selector == "") {
+        return null
+    }
+    val params = MutableMap<String, JsonValue>()
+    params.put("page", jsonString(page))
+    params.put("locator", locatorValue(loc))
+    return requestFrame(id, "page.text", jsonObject(params.freeze()).write())
+}
+
+fun contentCmd(id: Int, page: String): String? {
+    if (page == "") {
+        return null
+    }
+    val params = MutableMap<String, JsonValue>()
+    params.put("page", jsonString(page))
+    return requestFrame(id, "page.content", jsonObject(params.freeze()).write())
+}
+
+fun attributeCmd(id: Int, page: String, loc: Locator, name: String): String? {
+    if (page == "" || loc.selector == "" || name == "") {
+        return null
+    }
+    val params = MutableMap<String, JsonValue>()
+    params.put("page", jsonString(page))
+    params.put("locator", locatorValue(loc))
+    params.put("name", jsonString(name))
+    return requestFrame(id, "page.attribute", jsonObject(params.freeze()).write())
+}
+
+fun waitForCmd(id: Int, page: String, selector: String, timeoutMs: Int): String? {
+    if (page == "" || selector == "") {
+        return null
+    }
+    val params = MutableMap<String, JsonValue>()
+    params.put("page", jsonString(page))
+    params.put("selector", jsonString(selector))
+    params.put("timeoutMs", jsonNumber(timeoutMs.toDouble()))
+    return requestFrame(id, "page.waitFor", jsonObject(params.freeze()).write())
+}
+
+fun waitForUrlCmd(id: Int, page: String, pattern: String, timeoutMs: Int): String? {
+    if (page == "" || pattern == "") {
+        return null
+    }
+    val params = MutableMap<String, JsonValue>()
+    params.put("page", jsonString(page))
+    params.put("pattern", jsonString(pattern))
+    params.put("timeoutMs", jsonNumber(timeoutMs.toDouble()))
+    return requestFrame(id, "page.waitForUrl", jsonObject(params.freeze()).write())
+}
+
+fun evaluateCmd(id: Int, page: String, script: String): String? {
+    if (page == "" || script == "") {
+        return null
+    }
+    val params = MutableMap<String, JsonValue>()
+    params.put("page", jsonString(page))
+    params.put("script", jsonString(script))
+    return requestFrame(id, "page.evaluate", jsonObject(params.freeze()).write())
+}
