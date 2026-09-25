@@ -28,18 +28,18 @@ narrows after an early-return null check (redundant `!!` warns).
 - [x] `Browser.connect/launch`, `newContext/contexts/close` (§6.1)
 - [x] `BrowserContext` / `Page` handles + cascade close (§§6.2, 6.3)
 - [x] `ProxyRegistry.childrenOf` for `pages()`/`contexts()`
-- [ ] Real WebSocket transport — BLOCKED, see below
+- [x] Real WebSocket transport: pure-Eiwa RFC 6455 client (`net/ws.ei`)
 - [ ] Chromium spawn/manage + CDP session — BLOCKED, see below
 - [ ] `Browser`/`Context`/`Page` managers, `Chromium Adapter` (§§5.4, 5.5)
 
-BLOCKER (reported, no workaround applied): `std.net` offers raw TCP
-only and `std.process` only blocking `exec`/`capture` — no background
-spawn/kill. A real WS client needs the HTTP Upgrade accept key
-(SHA-1 + base64), and neither exists in `std`. Hand-rolling SHA-1 in
-Eiwa or faking processes would be a workaround. Options: (a) `std`
-gains a WebSocket client + background process spawn; (b) engine
-transport ships as a native helper outside Eiwa. Pure client logic
-above is done and tested (23/23).
+BLOCKER (reported, no workaround applied): `std.process` offers only
+blocking `exec`/`capture` — no background spawn/kill for a long-lived
+Chromium. The WS half is done in pure Eiwa (handshake with accept
+verification via the crypto lib's new SHA-1/standard-base64, masking,
+ping/pong, close; loopback integration test green). Remaining need:
+(a) `std` gains background process spawn, or (b) engine transport
+ships as a native helper outside Eiwa. Pure client logic + WS done and
+tested (32/32).
 
 ## Phase 3 — Basic Automation (MVP)
 

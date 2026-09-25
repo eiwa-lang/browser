@@ -1,0 +1,186 @@
+import { assert } from "std.core"
+import { NativeMemory } from "std.core"
+import { TCPServer } from "std.net"
+import { sleepMs } from "std.time"
+import { xorByte, wsAccept, applyMask, randomMask, parseHeader, buildFrame, validHandshake, wsRecv, writeAll, wsConnect } from ".browser.net.ws"
+
+fun readHttpRequest(sock: Socket): String? {
+    var req = ""
+    while (req.indexOf("\r\n\r\n") < 0) {
+        if (req.length > 8192) {
+            return null
+        }
+        val chunk = sock.read(1024)
+        if (chunk == "") {
+            return null
+        }
+        req = req + chunk
+    }
+    return req
+}
+
+test "ws: xor is bitwise-correct" {
+    assert(xorByte(0, 0) == 0)
+    assert(xorByte(255, 0) == 255)
+    assert(xorByte(255, 255) == 0)
+    assert(xorByte(65, 32) == 97)
+    assert(xorByte(1, 1) == 0)
+    assert(xorByte(170, 85) == 255)
+}
+
+test "ws: accept matches RFC 6455 vector" {
+    assert(wsAccept("dGhlIHNhbXBsZSBub25jZQ==") == "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=")
+}
+
+test "ws: mask twice restores payload" {
+    val mask = randomMask()
+    assert(mask.length == 4)
+    val once = applyMask("hello eiwa", mask, 0)
+    assert(once != "hello eiwa")
+    assert(applyMask(once, mask, 0) == "hello eiwa")
+}
+
+test "ws: unmasked frame header bytes" {
+    val f = buildFrame(1, "Hi", null)
+    assert(f.length == 4)
+    assert(NativeMemory.readByte(f.ptr!!, 0) == 129)
+    assert(NativeMemory.readByte(f.ptr!!, 1) == 2)
+    val h = parseHeader(f)
+    assert(h != null)
+    assert(h!!.fin)
+    assert(h!!.opcode == 1)
+    assert(h!!.masked == false)
+    assert(h!!.length == 2)
+    assert(h!!.headerLen == 2)
+}
+
+test "ws: masked frame sets the mask bit" {
+    val f = buildFrame(1, "Hi", "abcd")
+    assert(NativeMemory.readByte(f.ptr!!, 1) == 130)
+    val h = parseHeader(f)
+    assert(h!!.masked)
+    assert(h!!.length == 2)
+    assert(h!!.headerLen == 2)
+}
+
+test "ws: payload over 125 uses the 16-bit length" {
+    var payload = ""
+    var i = 0
+    while (i < 200) {
+        payload = payload + "x"
+        i = i + 1
+    }
+    val f = buildFrame(2, payload, null)
+    assert(f.length == 204)
+    assert(NativeMemory.readByte(f.ptr!!, 1) == 126)
+    assert(NativeMemory.readByte(f.ptr!!, 2) == 0)
+    assert(NativeMemory.readByte(f.ptr!!, 3) == 200)
+    assert(parseHeader(f)!!.length == 200)
+}
+
+test "ws: header rejects truncation" {
+    assert(parseHeader("") == null)
+    assert(parseHeader("x") == null)
+}
+
+test "ws: handshake validation accepts only 101 plus our key" {
+    val key = "dGhlIHNhbXBsZSBub25jZQ=="
+    val good = "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\n\r\n"
+    assert(validHandshake(good, key))
+    val badKey = "HTTP/1.1 101 Switching Protocols\r\nSec-WebSocket-Accept: AAAAAAAAAAAAAAAAAAAAAAAAAAAA=\r\n\r\n"
+    assert(validHandshake(badKey, key) == false)
+    val badStatus = "HTTP/1.1 200 OK\r\nSec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\n\r\n"
+    assert(validHandshake(badStatus, key) == false)
+}
+
+fun fakeWsEcho(port: Int): String {
+    val server = TCPServer()
+    if (server.bind(port) == false) {
+        return "bind-fail"
+    }
+    val conn = server.accept()
+    if (conn == null) {
+        server.close()
+        return "accept-fail"
+    }
+    val req = readHttpRequest(conn)
+    if (req == null) {
+        conn.close()
+        server.close()
+        return "read-fail"
+    }
+    var key = ""
+    val lines = req.split("\r\n")
+    for (lines) { line ->
+        if (line.indexOf("Sec-WebSocket-Key:") == 0) {
+            val colon = line.indexOf(":")
+            key = line.substring(colon + 1, line.length).trim()
+        }
+    }
+    if (key == "") {
+        conn.close()
+        server.close()
+        return "key-fail"
+    }
+    var res = "HTTP/1.1 101 Switching Protocols\r\n"
+    res = res + "Upgrade: websocket\r\n"
+    res = res + "Connection: Upgrade\r\n"
+    res = res + "Sec-WebSocket-Accept: ${wsAccept(key)}\r\n"
+    res = res + "\r\n"
+    if (writeAll(conn, res) == false) {
+        conn.close()
+        server.close()
+        return "write-fail"
+    }
+    val f = wsRecv(conn)
+    if (f == null) {
+        conn.close()
+        server.close()
+        return "frame-fail"
+    }
+    if (writeAll(conn, buildFrame(1, "echo:${f.payload}", null)) == false) {
+        conn.close()
+        server.close()
+        return "echo-fail"
+    }
+    val bye = wsRecv(conn)
+    conn.close()
+    server.close()
+    if (bye == null) {
+        return "close-fail"
+    }
+    if (bye.opcode == 8) {
+        return "ok"
+    }
+    return "opcode:${bye.opcode}"
+}
+
+fun wsEchoClient(port: Int): String {
+    val ws = wsConnect("127.0.0.1", port, "/chat")
+    if (ws == null) {
+        return "connect-fail"
+    }
+    if (ws.sendText("hello") == false) {
+        ws.close()
+        return "send-fail"
+    }
+    val got = ws.recv()
+    ws.close()
+    if (got == null) {
+        return "recv-fail"
+    }
+    return got
+}
+
+test "ws: handshake plus echo over loopback" {
+    val port = 19876
+    val server = task {
+        fakeWsEcho(port)
+    }
+    sleepMs(150)
+    val client = task {
+        wsEchoClient(port)
+    }
+    assert(client.await() == "echo:hello")
+    assert(server.await() == "ok")
+}
