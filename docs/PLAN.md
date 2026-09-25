@@ -76,8 +76,9 @@ does not narrow through `||` chains — `!!` after explicit null guards.
 
 ## Phase 7 — Diagnostics (MVP minimal)
 
-- [ ] `GET /health` (`status/protocol/version/browsers/contexts`) (§30.1)
-- [ ] Structured logs with redaction (§35)
+- [ ] `GET /health` endpoint (spec'd §30.1; impl needs the worker)
+- [x] Header redaction, case-insensitive sensitive set (§§35, 38)
+- [x] `parseConsole` (MVP event) + `parseChallenge` (post-MVP payload, §19)
 - [ ] `screenshot()` returning bytes — post-MVP (§17)
 - [ ] Tracing/metrics full — post-MVP (§§36, 37)
 
