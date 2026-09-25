@@ -1,0 +1,70 @@
+// Eiwa Browser protocol envelope: strict JSON-RPC 2.0 (§§24, 27).
+//
+// One message per WebSocket text frame. Either peer may send requests;
+// events are notifications (no `id`). Methods use
+// `<object>.<camelCaseMethod>` (e.g. `page.goto`).
+
+import { JsonRpc } from "std.jsonrpc"
+import { JsonValue, parseJson } from "std.json"
+import { BrowserError, rpcCodeFor } from ".browser.protocol.errors"
+
+fun parseFrame(raw: String): JsonRpc {
+    return JsonRpc.parse(raw)
+}
+
+fun isNotification(raw: String): Bool {
+    val root = parseJson(raw)
+    return root.get("id") == null
+}
+
+fun methodTarget(method: String): String {
+    val idx = method.indexOf(".")
+    if (idx < 0) {
+        return ""
+    }
+    return method.substring(0, idx)
+}
+
+fun methodName(method: String): String {
+    val idx = method.indexOf(".")
+    if (idx < 0) {
+        return method
+    }
+    return method.substring(idx + 1, method.length)
+}
+
+fun validMethod(method: String): Bool {
+    val idx = method.indexOf(".")
+    if (idx <= 0) {
+        return false
+    }
+    return idx + 1 < method.length
+}
+
+fun requestFrame(id: Int, method: String, params: String): String {
+    return "{\"jsonrpc\": \"2.0\", \"id\": $id, \"method\": \"$method\", \"params\": $params}"
+}
+
+fun notifyFrame(method: String, params: String): String {
+    return "{\"jsonrpc\": \"2.0\", \"method\": \"$method\", \"params\": $params}"
+}
+
+fun resultFrame(id: JsonValue, result: String): String {
+    val rpc = JsonRpc(id, "", JsonValue())
+    return rpc.response(result)
+}
+
+fun errorFrame(id: JsonValue, err: BrowserError): String {
+    val code = rpcCodeFor(err.code)
+    val rec = if (err.recoverable) "true" else "false"
+    return "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": ${id.write()},\n  \"error\": {\n    \"code\": $code,\n    \"message\": \"${err.message}\",\n    \"data\": {\n      \"code\": \"${err.code}\",\n      \"recoverable\": $rec\n    }\n  }\n}"
+}
+
+fun initializeRequest(version: String): String {
+    return requestFrame(1, "initialize", "{\"protocol\": \"eiwa-browser\", \"version\": \"$version\"}")
+}
+
+fun initializeVersion(raw: String): String {
+    val rpc = JsonRpc.parse(raw)
+    return rpc.argumentString("version")
+}

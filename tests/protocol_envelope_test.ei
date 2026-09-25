@@ -1,0 +1,73 @@
+import { assert } from "std.core"
+import { parseJson } from "std.json"
+import { rpcCodeFor, timeoutError } from ".browser.protocol.errors"
+import { parseFrame, isNotification, methodTarget, methodName, validMethod, requestFrame, notifyFrame, resultFrame, errorFrame, initializeRequest, initializeVersion } from ".browser.protocol.envelope"
+
+test "protocol: request frame round-trips through parse" {
+    val raw = requestFrame(42, "page.goto", "{\"page\": \"page-7\", \"url\": \"https://example.com\"}")
+    val rpc = parseFrame(raw)
+    assert(rpc.method == "page.goto")
+    assert(methodTarget(rpc.method) == "page")
+    assert(methodName(rpc.method) == "goto")
+    assert(rpc.argumentString("page") == "page-7")
+    assert(rpc.argumentString("url") == "https://example.com")
+    assert(isNotification(raw) == false)
+}
+
+test "protocol: event is a notification without id" {
+    val raw = notifyFrame("page.navigated", "{\"page\": \"page-7\", \"url\": \"https://example.com\"}")
+    assert(isNotification(raw))
+    val rpc = parseFrame(raw)
+    assert(rpc.method == "page.navigated")
+    assert(rpc.argumentString("page") == "page-7")
+}
+
+test "protocol: method naming rule object.camelMethod" {
+    assert(validMethod("page.goto"))
+    assert(validMethod("context.newPage"))
+    assert(validMethod("context.addCookie"))
+    assert(validMethod("page.goBack"))
+    assert(validMethod("initialize") == false)
+    assert(validMethod(".goto") == false)
+    assert(validMethod("page.") == false)
+    assert(validMethod("") == false)
+}
+
+test "protocol: standard codes plus Eiwa data code" {
+    assert(rpcCodeFor("PARSE") == -32700)
+    assert(rpcCodeFor("INVALID_REQUEST") == -32600)
+    assert(rpcCodeFor("METHOD_NOT_FOUND") == -32601)
+    assert(rpcCodeFor("INVALID_PARAMS") == -32602)
+    assert(rpcCodeFor("TIMEOUT") == -32603)
+    assert(rpcCodeFor("CHALLENGE") == -32603)
+    assert(rpcCodeFor("WHATEVER_NEW") == -32603)
+}
+
+test "protocol: error frame carries code and data" {
+    val rpc = parseFrame(requestFrame(7, "page.goto", "{}"))
+    val err = timeoutError("Navigation timed out")
+    assert(err.recoverable)
+    val raw = errorFrame(rpc.id, err)
+    val root = parseJson(raw)
+    val e = root.get("error")
+    assert(e != null)
+    assert(e!!.get("code")!!.asNumber().toInt() == -32603)
+    assert(e!!.get("message")!!.asString() == "Navigation timed out")
+    assert(e!!.get("data")!!.get("code")!!.asString() == "TIMEOUT")
+}
+
+test "protocol: result frame echoes request id" {
+    val rpc = parseFrame(requestFrame(9, "page.goto", "{}"))
+    val raw = resultFrame(rpc.id, "{\"url\": \"https://example.com\"}")
+    val root = parseJson(raw)
+    assert(root.get("id")!!.asNumber().toInt() == 9)
+    assert(root.get("result")!!.get("url")!!.asString() == "https://example.com")
+}
+
+test "protocol: initialize negotiates version" {
+    val raw = initializeRequest("1.0")
+    val rpc = parseFrame(raw)
+    assert(rpc.method == "initialize")
+    assert(rpc.argumentString("protocol") == "eiwa-browser")
+    assert(initializeVersion(raw) == "1.0")
+}

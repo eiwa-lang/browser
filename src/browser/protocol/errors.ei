@@ -1,0 +1,46 @@
+// Eiwa Browser protocol errors (§§24.3, 33).
+//
+// The wire carries a standard JSON-RPC code (Int); the Eiwa detail goes
+// in `data.code` so clients can match domain errors without parsing text.
+
+type BrowserError(
+    val code: String,
+    val message: String,
+    val recoverable: Bool = false
+)
+
+fun rpcCodeFor(code: String): Int {
+    if (code == "PARSE") {
+        return -32700
+    }
+    if (code == "INVALID_REQUEST") {
+        return -32600
+    }
+    if (code == "METHOD_NOT_FOUND") {
+        return -32601
+    }
+    if (code == "INVALID_PARAMS") {
+        return -32602
+    }
+    return -32603
+}
+
+fun timeoutError(message: String): BrowserError {
+    return BrowserError("TIMEOUT", message, true)
+}
+
+fun cancelledError(message: String): BrowserError {
+    return BrowserError("CANCELLED", message, false)
+}
+
+fun challengeError(message: String): BrowserError {
+    return BrowserError("CHALLENGE", message, false)
+}
+
+fun closedError(message: String): BrowserError {
+    return BrowserError("BROWSER_CLOSED", message, false)
+}
+
+fun exhaustedError(message: String): BrowserError {
+    return BrowserError("RESOURCE_EXHAUSTED", message, true)
+}

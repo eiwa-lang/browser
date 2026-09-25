@@ -6,15 +6,15 @@ progress. `MVP` = first release; `post-MVP` = later.
 
 ## Phase 1 — Protocol (MVP)
 
-- [ ] JSON-RPC 2.0 framing: one message per WS text frame (§§24, 27)
-- [ ] `initialize` handshake with version + capabilities (§26)
-- [ ] Method naming `<object>.<camelCaseMethod>` (§24)
-- [ ] Success/error envelope: std codes + `data.code` mapping (§§24.3, 33)
-- [ ] Event notifications with `page`/`context` owner in `params` (§24.4)
+- [x] JSON-RPC 2.0 framing: one message per WS text frame (§§24, 27)
+- [x] `initialize` handshake with version + capabilities (§26)
+- [x] Method naming `<object>.<camelCaseMethod>` (§24)
+- [x] Success/error envelope: std codes + `data.code` mapping (§§24.3, 33)
+- [x] Event notifications with `page`/`context` owner in `params` (§24.4)
 - [ ] `cancel` notification (§24.6)
 - [ ] `page.subscribe` implicit-subscribe rule (§18)
 - [ ] Remote object IDs + client proxies (§25)
-- [ ] `protocol/protocol.yaml` kept in sync with implementation
+- [x] `protocol/protocol.yaml` kept in sync with implementation
 
 ## Phase 2 — Chromium Engine (MVP)
 
