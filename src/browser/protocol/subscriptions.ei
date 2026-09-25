@@ -1,0 +1,52 @@
+// Implicit subscription tracking (§18).
+//
+// First local listener per (page, topic) means "send page.subscribe";
+// last removal means "send page.unsubscribe". Frame builders live in
+// `.browser.protocol.envelope`; this type only tracks state.
+
+import { MutableMap, MutableSet } from "std.collections"
+
+type Subscriptions(
+    val topics: MutableMap<String, MutableSet<String>> = MutableMap<String, MutableSet<String>>()
+) {
+
+    fun subscribe(page: String, topic: String): Bool {
+        if (this.topics.contains(page) == false) {
+            val fresh: MutableSet<String> = MutableSet<String>()
+            fresh.add(topic)
+            this.topics.put(page, fresh)
+            return true
+        }
+        val set = this.topics.get(page)!!
+        if (set.contains(topic)) {
+            return false
+        }
+        set.add(topic)
+        return true
+    }
+
+    fun unsubscribe(page: String, topic: String): Bool {
+        if (this.topics.contains(page) == false) {
+            return false
+        }
+        val set = this.topics.get(page)!!
+        if (set.remove(topic) == false) {
+            return false
+        }
+        if (set.isEmpty()) {
+            this.topics.remove(page)
+        }
+        return true
+    }
+
+    fun subscribed(page: String, topic: String): Bool {
+        if (this.topics.contains(page) == false) {
+            return false
+        }
+        return this.topics.get(page)!!.contains(topic)
+    }
+
+    fun dropPage(page: String): Bool {
+        return this.topics.remove(page) != null
+    }
+}

@@ -13,19 +13,14 @@ progress. `MVP` = first release; `post-MVP` = later.
 - [x] Event notifications with `page`/`context` owner in `params` (§24.4)
 - [x] `cancel` notification (§24.6)
 - [x] `page.subscribe`/`page.unsubscribe` frames (§18)
-- [ ] `page.subscribe` implicit-subscribe tracker — BLOCKED, see below
+- [x] `page.subscribe` implicit-subscribe tracker (`Subscriptions`)
 - [x] Remote ref parsing (`page-7` → kind) (§25)
-- [ ] Live proxy registry (id → proxy + owner) — BLOCKED, see below
+- [x] Live proxy registry with cascade removal (`ProxyRegistry`)
 - [x] `protocol/protocol.yaml` kept in sync with implementation
 
-BLOCKER (reported, no workaround applied): `std.collections`
-`MutableMap`/`MutableSet` expose no `remove` (verified in
-`eiwa-lang/src/std/collections.ei`; only `MutableList` and `fs` have
-it). The subscription tracker and the proxy registry both require
-deleting entries (`unsubscribe` last-listener, `pageClosed` eviction).
-Options: (a) language adds `MutableMap.remove(key)` / `MutableSet.remove`;
-(b) spec moves registry ownership elsewhere. Pure builders
-(`subscribeFrame`, `parseRef`) are done and tested.
+Note: tracker + registry unblocked by `eiwa-lang@43896db`
+(`MutableMap.remove` / `MutableSet.remove`). Language finding: `val`
+narrows after an early-return null check (redundant `!!` warns).
 
 ## Phase 2 — Chromium Engine (MVP)
 

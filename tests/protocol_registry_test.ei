@@ -1,0 +1,62 @@
+import { assert } from "std.core"
+import { Subscriptions } from ".browser.protocol.subscriptions"
+import { ProxyRegistry } from ".browser.protocol.registry"
+
+test "protocol: first subscribe is new, second is duplicate" {
+    val subs = Subscriptions()
+    assert(subs.subscribe("page-7", "request"))
+    assert(subs.subscribe("page-7", "request") == false)
+    assert(subs.subscribe("page-7", "response"))
+    assert(subs.subscribed("page-7", "request"))
+    assert(subs.subscribed("page-7", "console") == false)
+    assert(subs.subscribed("page-9", "request") == false)
+}
+
+test "protocol: last unsubscribe cleans the page entry" {
+    val subs = Subscriptions()
+    subs.subscribe("page-7", "request")
+    subs.subscribe("page-7", "response")
+    assert(subs.unsubscribe("page-7", "request"))
+    assert(subs.subscribed("page-7", "response"))
+    assert(subs.unsubscribe("page-7", "nope") == false)
+    assert(subs.unsubscribe("page-9", "request") == false)
+    assert(subs.unsubscribe("page-7", "response"))
+    assert(subs.subscribed("page-7", "response") == false)
+    assert(subs.subscribe("page-7", "request"))
+}
+
+test "protocol: dropPage forgets all topics" {
+    val subs = Subscriptions()
+    subs.subscribe("page-7", "request")
+    assert(subs.dropPage("page-7"))
+    assert(subs.dropPage("page-7") == false)
+    assert(subs.subscribed("page-7", "request") == false)
+}
+
+test "protocol: registry resolves kinds and owners" {
+    val reg = ProxyRegistry()
+    assert(reg.register("browser-1", ""))
+    assert(reg.register("ctx-3", "browser-1"))
+    assert(reg.register("page-7", "ctx-3"))
+    assert(reg.register("bogus", "") == false)
+    assert(reg.size() == 3)
+    assert(reg.kindOf("page-7") == "Page")
+    assert(reg.ownerOf("page-7") == "ctx-3")
+    assert(reg.contains("ctx-3"))
+    assert(reg.kindOf("page-9") == null)
+}
+
+test "protocol: registry removal cascades to owned children" {
+    val reg = ProxyRegistry()
+    reg.register("browser-1", "")
+    reg.register("ctx-3", "browser-1")
+    reg.register("page-7", "ctx-3")
+    reg.register("page-8", "ctx-3")
+    assert(reg.remove("page-7"))
+    assert(reg.contains("page-7") == false)
+    assert(reg.contains("page-8"))
+    assert(reg.remove("ctx-3"))
+    assert(reg.contains("page-8") == false)
+    assert(reg.contains("browser-1"))
+    assert(reg.remove("page-7") == false)
+}

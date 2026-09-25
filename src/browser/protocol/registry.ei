@@ -1,0 +1,59 @@
+// Live proxy registry (§25).
+//
+// Remote id → kind + owning context. Entries die on `pageClosed` /
+// `contextClosed` (with cascade to owned children), so event routing
+// never goes stale. Malformed ids are rejected at registration.
+
+import { MutableList, MutableMap } from "std.collections"
+import { parseRef } from ".browser.protocol.refs"
+
+type ProxyRegistry(
+    val kinds: MutableMap<String, String> = MutableMap<String, String>(),
+    val owners: MutableMap<String, String> = MutableMap<String, String>()
+) {
+
+    fun register(id: String, owner: String): Bool {
+        val ref = parseRef(id)
+        if (ref == null) {
+            return false
+        }
+        this.kinds.put(id, ref.kind)
+        this.owners.put(id, owner)
+        return true
+    }
+
+    fun kindOf(id: String): String? {
+        return this.kinds.get(id)
+    }
+
+    fun ownerOf(id: String): String? {
+        return this.owners.get(id)
+    }
+
+    fun contains(id: String): Bool {
+        return this.kinds.contains(id)
+    }
+
+    fun size(): Int {
+        return this.kinds.size()
+    }
+
+    fun remove(id: String): Bool {
+        val gone = this.kinds.remove(id) != null
+        this.owners.remove(id)
+        val owned = this.owners
+        val orphans: MutableList<String> = MutableList<String>()
+        for (owned) { entry ->
+            if (entry.value == id) {
+                orphans.add(entry.key)
+            }
+        }
+        var i = 0
+        while (i < orphans.size()) {
+            this.kinds.remove(orphans.get(i))
+            this.owners.remove(orphans.get(i))
+            i = i + 1
+        }
+        return gone || orphans.size() > 0
+    }
+}
