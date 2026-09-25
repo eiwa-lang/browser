@@ -1,0 +1,83 @@
+import { assert } from "std.core"
+import { WorkerPool } from ".browser.pool"
+import { connect, launch } from ".browser.browser"
+import { BrowserContext } from ".context.context"
+import { Page } from ".page.page"
+
+test "browser: pool spreads round-robin and skips dead workers" {
+    val pool = WorkerPool(["ws://a:8080", "ws://b:8080"])
+    assert(pool.pick() == "ws://a:8080")
+    assert(pool.pick() == "ws://b:8080")
+    assert(pool.pick() == "ws://a:8080")
+    pool.markDead("ws://a:8080")
+    assert(pool.pick() == "ws://b:8080")
+    assert(pool.pick() == "ws://b:8080")
+    pool.markDead("ws://b:8080")
+    assert(pool.pick() == null)
+    pool.markOk("ws://a:8080")
+    assert(pool.pick() == "ws://a:8080")
+}
+
+test "browser: empty pool picks nothing" {
+    val pool = WorkerPool([])
+    assert(pool.pick() == null)
+    val dead = connect([], 8)
+    assert(dead.newContext() == null)
+}
+
+test "browser: new contexts pin sticky workers" {
+    val b = connect(["ws://a:8080", "ws://b:8080"], 8)
+    val c1 = b.newContext()
+    val c2 = b.newContext()
+    assert(c1 == "ctx-1")
+    assert(c2 == "ctx-2")
+    assert(b.workerOf(c1!!) == "ws://a:8080")
+    assert(b.workerOf(c2!!) == "ws://b:8080")
+    assert(b.contexts().size() == 2)
+    assert(b.workerOf("ctx-9") == null)
+}
+
+test "browser: pages live under their context and die with it" {
+    val b = connect(["ws://a:8080"], 8)
+    val ctx = b.newContext()!!
+    assert(b.newPage("ctx-9") == null)
+    val p1 = b.newPage(ctx)
+    val p2 = b.newPage(ctx)
+    assert(p1 == "page-1")
+    assert(p2 == "page-2")
+    assert(b.pages(ctx).size() == 2)
+    assert(b.closePage(p1!!))
+    assert(b.pages(ctx).size() == 1)
+    assert(b.closeContext(ctx))
+    assert(b.pages(ctx).size() == 0)
+    assert(b.contexts().size() == 0)
+    assert(b.newPage(ctx) == null)
+}
+
+test "browser: handles delegate to the client" {
+    val b = connect(["ws://a:8080"], 8)
+    val ctx = BrowserContext(b, b.newContext()!!)
+    val p = ctx.newPage()!!
+    assert(ctx.pages().size() == 1)
+    assert(ctx.worker() == "ws://a:8080")
+    val page = Page(b, p, ctx.id)
+    assert(page.close())
+    assert(ctx.pages().size() == 0)
+    assert(ctx.close())
+}
+
+test "browser: close drains every context" {
+    val b = connect(["ws://a:8080"], 8)
+    b.newContext()
+    b.newContext()
+    assert(b.close() == 2)
+    assert(b.contexts().size() == 0)
+    assert(b.close() == 0)
+}
+
+test "browser: launch targets the local worker" {
+    val b = launch()
+    val ctx = b.newContext()!!
+    assert(b.workerOf(ctx) == "ws://localhost:8080")
+    assert(b.close() == 1)
+}

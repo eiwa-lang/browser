@@ -1,0 +1,54 @@
+// Client-side worker pool (§§5.2, 30.2, 30.3).
+//
+// One persistent WebSocket per worker URL (transport opens them; this
+// type only decides). MVP selection is round-robin over non-dead
+// workers; least-loaded via /health is post-MVP. Sticky context→worker
+// pins live in `.browser.browser.Browser`.
+
+import { MutableMap } from "std.collections"
+
+type WorkerPool(
+    val urls: List<String>,
+    val states: MutableMap<String, String> = MutableMap<String, String>(),
+    var cursor: Int = 0
+) {
+
+    fun markDead(url: String): Void {
+        this.states.put(url, "dead")
+    }
+
+    fun markDegraded(url: String): Void {
+        this.states.put(url, "degraded")
+    }
+
+    fun markOk(url: String): Void {
+        this.states.put(url, "ok")
+    }
+
+    fun stateOf(url: String): String {
+        val s = this.states.get(url)
+        if (s == null) {
+            return "ok"
+        }
+        return s
+    }
+
+    fun pick(): String? {
+        val n = this.urls.size()
+        if (n == 0) {
+            return null
+        }
+        var tried = 0
+        while (tried < n) {
+            val at = (this.cursor + tried) % n
+            val url = this.urls.get(at)
+            if (this.stateOf(url) == "dead") {
+                tried = tried + 1
+            } else {
+                this.cursor = (at + 1) % n
+                return url
+            }
+        }
+        return null
+    }
+}

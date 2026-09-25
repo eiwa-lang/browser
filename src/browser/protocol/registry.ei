@@ -38,6 +38,17 @@ type ProxyRegistry(
         return this.kinds.size()
     }
 
+    fun childrenOf(owner: String): List<String> {
+        val out: MutableList<String> = MutableList<String>()
+        val owned = this.owners
+        for (owned) { entry ->
+            if (entry.value == owner) {
+                out.add(entry.key)
+            }
+        }
+        return out.freeze()
+    }
+
     fun remove(id: String): Bool {
         val gone = this.kinds.remove(id) != null
         this.owners.remove(id)

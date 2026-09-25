@@ -24,12 +24,22 @@ narrows after an early-return null check (redundant `!!` warns).
 
 ## Phase 2 — Chromium Engine (MVP)
 
-- [ ] Chromium process lifecycle (launch/close, configurable count) (§28)
-- [ ] CDP isolated behind Chromium Adapter (no other CDP imports) (§5.5)
-- [ ] `Browser`: `launch/connect/close/contexts/newContext/version/isConnected` (§6.1)
-- [ ] `BrowserContext` isolation: cookies, storages, permissions (§6.2)
-- [ ] `Page` handle + `Locator` (§6.3, §7)
-- [ ] Unit mapping per §5.4 (managers, LocatorEngine, EventDispatcher)
+- [x] Client routing: `WorkerPool` round-robin, sticky pins, eviction
+- [x] `Browser.connect/launch`, `newContext/contexts/close` (§6.1)
+- [x] `BrowserContext` / `Page` handles + cascade close (§§6.2, 6.3)
+- [x] `ProxyRegistry.childrenOf` for `pages()`/`contexts()`
+- [ ] Real WebSocket transport — BLOCKED, see below
+- [ ] Chromium spawn/manage + CDP session — BLOCKED, see below
+- [ ] `Browser`/`Context`/`Page` managers, `Chromium Adapter` (§§5.4, 5.5)
+
+BLOCKER (reported, no workaround applied): `std.net` offers raw TCP
+only and `std.process` only blocking `exec`/`capture` — no background
+spawn/kill. A real WS client needs the HTTP Upgrade accept key
+(SHA-1 + base64), and neither exists in `std`. Hand-rolling SHA-1 in
+Eiwa or faking processes would be a workaround. Options: (a) `std`
+gains a WebSocket client + background process spawn; (b) engine
+transport ships as a native helper outside Eiwa. Pure client logic
+above is done and tested (23/23).
 
 ## Phase 3 — Basic Automation (MVP)
 

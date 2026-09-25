@@ -1,0 +1,100 @@
+// Browser client handle (§§5.2, 6.1).
+//
+// Owns the worker pool, the proxy registry, id counters and sticky
+// context→worker pins. Transport (real WebSockets) attaches later;
+// routing decisions are fully testable here.
+
+import { MutableList, MutableMap } from "std.collections"
+import { WorkerPool } from ".browser.pool"
+import { ProxyRegistry } from ".browser.protocol.registry"
+
+type BrowserConfig(
+    val workers: List<String>,
+    val poolSize: Int = 8
+)
+
+type Browser(
+    val config: BrowserConfig,
+    val pool: WorkerPool,
+    val registry: ProxyRegistry,
+    val pinned: MutableMap<String, String> = MutableMap<String, String>(),
+    var nextContext: Int = 1,
+    var nextPage: Int = 1
+) {
+
+    fun newContext(): String? {
+        val url = this.pool.pick()
+        if (url == null) {
+            return null
+        }
+        val id = "ctx-${this.nextContext}"
+        this.nextContext = this.nextContext + 1
+        this.pinned.put(id, url)
+        if (this.registry.register(id, "browser")) {
+            return id
+        }
+        this.pinned.remove(id)
+        return null
+    }
+
+    fun contexts(): List<String> {
+        val out: MutableList<String> = MutableList<String>()
+        val pinned = this.pinned
+        for (pinned) { entry ->
+            out.add(entry.key)
+        }
+        return out.freeze()
+    }
+
+    fun workerOf(ctx: String): String? {
+        return this.pinned.get(ctx)
+    }
+
+    fun newPage(ctx: String): String? {
+        if (this.pinned.contains(ctx) == false) {
+            return null
+        }
+        val id = "page-${this.nextPage}"
+        this.nextPage = this.nextPage + 1
+        if (this.registry.register(id, ctx)) {
+            return id
+        }
+        return null
+    }
+
+    fun pages(ctx: String): List<String> {
+        return this.registry.childrenOf(ctx)
+    }
+
+    fun closePage(id: String): Bool {
+        return this.registry.remove(id)
+    }
+
+    fun closeContext(id: String): Bool {
+        val unpinned = this.pinned.remove(id) != null
+        val dropped = this.registry.remove(id)
+        return unpinned || dropped
+    }
+
+    fun close(): Int {
+        val live = this.contexts()
+        var n = 0
+        var i = 0
+        while (i < live.size()) {
+            if (this.closeContext(live.get(i))) {
+                n = n + 1
+            }
+            i = i + 1
+        }
+        return n
+    }
+}
+
+fun connect(workers: List<String>, poolSize: Int): Browser {
+    val config = BrowserConfig(workers, poolSize)
+    return Browser(config, WorkerPool(workers), ProxyRegistry())
+}
+
+fun launch(): Browser {
+    return connect(["ws://localhost:8080"], 1)
+}

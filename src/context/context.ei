@@ -1,0 +1,23 @@
+// BrowserContext handle (§6.2): isolated session owned by a Browser.
+
+import { List } from "std.collections"
+import { Browser } from ".browser.browser"
+
+type BrowserContext(val browser: Browser, val id: String) {
+
+    fun newPage(): String? {
+        return this.browser.newPage(this.id)
+    }
+
+    fun pages(): List<String> {
+        return this.browser.pages(this.id)
+    }
+
+    fun worker(): String? {
+        return this.browser.workerOf(this.id)
+    }
+
+    fun close(): Bool {
+        return this.browser.closeContext(this.id)
+    }
+}

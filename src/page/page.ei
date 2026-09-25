@@ -1,0 +1,10 @@
+// Page handle (§6.3): a browser tab inside a context.
+
+import { Browser } from ".browser.browser"
+
+type Page(val browser: Browser, val id: String, val context: String) {
+
+    fun close(): Bool {
+        return this.browser.closePage(this.id)
+    }
+}
