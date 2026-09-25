@@ -1,0 +1,40 @@
+// Remote object references (§25).
+//
+// Pure id parsing only. The live registry (id → proxy + owner) is NOT
+// implemented here: it requires deleting entries on `pageClosed` and
+// `std.collections` MutableMap/MutableSet expose no `remove`
+// (verified in eiwa-lang src/std/collections.ei — only MutableList and
+// fs have `remove`). See docs/PLAN.md Phase 1 blocker.
+
+type RemoteRef(
+    val id: String,
+    val kind: String
+)
+
+fun parseRef(id: String): RemoteRef? {
+    val idx = id.indexOf("-")
+    if (idx <= 0) {
+        return null
+    }
+    val rest = id.substring(idx + 1, id.length)
+    if (rest == "") {
+        return null
+    }
+    val prefix = id.substring(0, idx)
+    if (prefix == "page") {
+        return RemoteRef(id, "Page")
+    }
+    if (prefix == "ctx") {
+        return RemoteRef(id, "BrowserContext")
+    }
+    if (prefix == "browser") {
+        return RemoteRef(id, "Browser")
+    }
+    if (prefix == "route") {
+        return RemoteRef(id, "Route")
+    }
+    if (prefix == "ch") {
+        return RemoteRef(id, "Challenge")
+    }
+    return null
+}

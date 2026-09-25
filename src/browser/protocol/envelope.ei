@@ -68,3 +68,23 @@ fun initializeVersion(raw: String): String {
     val rpc = JsonRpc.parse(raw)
     return rpc.argumentString("version")
 }
+
+fun cancelFrame(id: Int): String {
+    return notifyFrame("cancel", "{\"id\": $id}")
+}
+
+fun isCancel(raw: String): Bool {
+    return parseFrame(raw).method == "cancel"
+}
+
+fun cancelledId(raw: String): Int {
+    return parseFrame(raw).argumentInt("id")
+}
+
+fun subscribeFrame(id: Int, page: String, topic: String): String {
+    return requestFrame(id, "page.subscribe", "{\"page\": \"$page\", \"topic\": \"$topic\"}")
+}
+
+fun unsubscribeFrame(id: Int, page: String, topic: String): String {
+    return requestFrame(id, "page.unsubscribe", "{\"page\": \"$page\", \"topic\": \"$topic\"}")
+}

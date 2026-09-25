@@ -1,0 +1,41 @@
+import { assert } from "std.core"
+import { parseJson } from "std.json"
+import { cancelFrame, isCancel, cancelledId, subscribeFrame, unsubscribeFrame, parseFrame, requestFrame } from ".browser.protocol.envelope"
+import { parseRef } from ".browser.protocol.refs"
+
+test "protocol: cancel notification carries the request id" {
+    val raw = cancelFrame(42)
+    assert(isCancel(raw))
+    assert(cancelledId(raw) == 42)
+    assert(isCancel(requestFrame(1, "page.goto", "{}")) == false)
+}
+
+test "protocol: remote refs parse to kinds" {
+    val p = parseRef("page-7")
+    assert(p != null)
+    assert(p!!.kind == "Page")
+    assert(p!!.id == "page-7")
+    assert(parseRef("ctx-3")!!.kind == "BrowserContext")
+    assert(parseRef("browser-1")!!.kind == "Browser")
+    assert(parseRef("route-1")!!.kind == "Route")
+    assert(parseRef("ch-9")!!.kind == "Challenge")
+}
+
+test "protocol: malformed refs are rejected" {
+    assert(parseRef("") == null)
+    assert(parseRef("page") == null)
+    assert(parseRef("page-") == null)
+    assert(parseRef("-7") == null)
+    assert(parseRef("unknown-1") == null)
+}
+
+test "protocol: subscribe frames route by page and topic" {
+    val raw = subscribeFrame(5, "page-7", "request")
+    val rpc = parseFrame(raw)
+    assert(rpc.method == "page.subscribe")
+    assert(rpc.argumentString("page") == "page-7")
+    assert(rpc.argumentString("topic") == "request")
+    val un = parseFrame(unsubscribeFrame(6, "page-7", "request"))
+    assert(un.method == "page.unsubscribe")
+    assert(un.argumentString("topic") == "request")
+}
