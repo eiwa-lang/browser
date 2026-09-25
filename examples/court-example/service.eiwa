@@ -1,0 +1,40 @@
+// Reference consumer service (eiwa-court style, outside browser scope).
+// HTTP-first fallback + pool via Browser.connect + normalization in-app.
+use browser
+use arest
+
+val browser = Browser.connect(
+    workers: ["ws://browser-worker:8080"],
+    poolSize: 8
+)
+
+connector TJExample
+
+searchProcess(number) {
+    // 1. HTTP first when an authorized interface exists.
+    val res = httpGet("https://tribunal.example.gov/api/process/$number")
+    if (res.ok) {
+        return normalize(res.body())
+    }
+
+    // 2. Fallback to browser automation.
+    val context = browser.newContext()
+    try
+        val page = context.newPage()
+        try
+            page.goto("https://tribunal.example.gov")
+
+            page.locator("#process-number").fill(number)
+            page.locator("#search").click()
+            page.waitFor(".process-result")
+
+            // 3. Raw artifacts only; normalize + persist in THIS service.
+            val raw = page.locator(".process-result").text()
+            return normalize(raw)
+        finally
+            page.close()
+        end
+    finally
+        context.close()
+    end
+}

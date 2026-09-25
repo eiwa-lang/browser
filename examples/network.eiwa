@@ -1,0 +1,28 @@
+// Network observation with an observe-only plugin (MVP).
+use browser
+
+plugin NetworkLogger
+
+onRequest { request ->
+    log(request.method)
+    log(request.url)
+}
+
+onResponse { response ->
+    log(response.status)
+}
+
+val browser = Browser.connect(
+    workers: ["ws://browser-worker:8080"],
+    poolSize: 8
+)
+browser.use(NetworkLogger)
+
+val context = browser.newContext()
+val page = context.newPage()
+
+page.goto("https://example.com")
+
+page.close()
+context.close()
+browser.close()

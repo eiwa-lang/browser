@@ -1,0 +1,60 @@
+# Eiwa Browser Protocol (JSON-RPC 2.0) — MVP method index
+# Full contract: spec/Eiwa-Browser-SPEC.md §§24-27.
+
+protocol: eiwa-browser
+version: "1.0"
+transport: websocket # one JSON-RPC message per text frame
+
+methods:
+  # handshake (§26)
+  - initialize
+  # browser (§6.1)
+  - browser.launch
+  - browser.connect
+  - browser.close
+  - browser.contexts
+  - browser.newContext
+  - browser.version
+  - browser.isConnected
+  # context (§6.2)
+  - context.newPage
+  - context.pages
+  - context.cookies
+  - context.addCookie
+  - context.clearCookies
+  - context.storageState
+  - context.close
+  # page (§6.3, MVP subset in §45)
+  - page.goto
+  - page.reload
+  - page.goBack
+  - page.goForward
+  - page.close
+  - page.click
+  - page.fill
+  - page.type
+  - page.press
+  - page.text
+  - page.content
+  - page.attribute
+  - page.evaluate
+  - page.waitFor
+  - page.waitForUrl
+  - page.locator
+  - page.subscribe
+  # artifacts (rule A: bytes via protocol, app saves)
+  - download.bytes
+  - artifact.read
+  # worker (§30.1)
+  - health: http GET /health
+
+notifications:
+  - page.navigated
+  - page.request
+  - page.response
+  - page.requestFailed
+  - page.console
+  - page.download
+  - page.created
+  - page.closed
+  - cancel

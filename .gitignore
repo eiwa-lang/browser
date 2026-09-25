@@ -1,0 +1,4 @@
+bin/
+.eiwa/
+.env
+tools/

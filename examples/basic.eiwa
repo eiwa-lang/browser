@@ -1,0 +1,20 @@
+// Basic usage: connect, navigate, read, close.
+use browser
+
+val browser = Browser.connect(
+    workers: ["ws://browser-worker:8080"],
+    poolSize: 8
+)
+
+val context = browser.newContext()
+val page = context.newPage()
+
+page.goto("https://example.com")
+page.locator("h1").waitFor()
+
+val title = page.locator("h1").text()
+print(title)
+
+page.close()
+context.close()
+browser.close()
