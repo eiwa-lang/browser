@@ -3,6 +3,5 @@ version: 0.1.0
 
 dependencies:
   crypto:
-    # Local path until eiwa-lang/crypto publishes sha1Base64/randomBase64;
-    # then switch to github: eiwa-lang/crypto, branch: main.
-    path: ../crypto
+    github: eiwa-lang/crypto
+    branch: main
