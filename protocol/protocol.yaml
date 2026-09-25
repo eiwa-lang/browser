@@ -1,5 +1,5 @@
 # Eiwa Browser Protocol (JSON-RPC 2.0) — MVP method index
-# Full contract: spec/Eiwa-Browser-SPEC.md §§24-27.
+# Full contract: docs/Eiwa-Browser-SPEC.md §§24-27.
 
 protocol: eiwa-browser
 version: "1.0"

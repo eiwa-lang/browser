@@ -3,7 +3,7 @@
 Eiwa-native browser automation: client library + JSON-RPC 2.0 protocol +
 engine driving headless Chromium (CDP hidden behind the Chromium Adapter).
 
-Canonical spec: `spec/Eiwa-Browser-SPEC.md`.
+Canonical spec: `docs/Eiwa-Browser-SPEC.md`.
 
 ## Layout (§44)
 
