@@ -1,0 +1,51 @@
+// Observed network payloads (§11): parsed from event params, never sent.
+
+import { JsonValue } from "std.json"
+
+type ObservedRequest(
+    val id: String,
+    val page: String,
+    val url: String,
+    val method: String
+)
+
+type ObservedResponse(
+    val request: String,
+    val page: String,
+    val url: String,
+    val status: Int
+)
+
+fun parseRequest(params: JsonValue): ObservedRequest? {
+    val id = params.get("request")
+    val page = params.get("page")
+    val url = params.get("url")
+    val method = params.get("method")
+    if (id == null || page == null || url == null || method == null) {
+        return null
+    }
+    if (id!!.isString() == false || page!!.isString() == false) {
+        return null
+    }
+    if (url!!.isString() == false || method!!.isString() == false) {
+        return null
+    }
+    return ObservedRequest(id!!.asString(), page!!.asString(), url!!.asString(), method!!.asString())
+}
+
+fun parseResponse(params: JsonValue): ObservedResponse? {
+    val req = params.get("request")
+    val page = params.get("page")
+    val url = params.get("url")
+    val status = params.get("status")
+    if (req == null || page == null || url == null || status == null) {
+        return null
+    }
+    if (req!!.isString() == false || page!!.isString() == false) {
+        return null
+    }
+    if (url!!.isString() == false || status!!.isNumber() == false) {
+        return null
+    }
+    return ObservedResponse(req!!.asString(), page!!.asString(), url!!.asString(), status!!.asNumber().toInt())
+}

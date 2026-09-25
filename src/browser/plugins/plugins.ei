@@ -1,0 +1,64 @@
+// Plugin registration, MVP: observe-only (§§20-22).
+//
+// The registry maps plugin names to subscribed topics. Enforcement of
+// the `challenge` permission (post-MVP) happens at dispatch, which
+// needs the transport; registration and topic validation live here.
+
+import { MutableList, MutableMap } from "std.collections"
+
+fun validTopic(topic: String): Bool {
+    return topic == "request" || topic == "response" || topic == "console" || topic == "download" || topic == "navigation"
+}
+
+type PluginRegistry(
+    val topics: MutableMap<String, MutableList<String>> = MutableMap<String, MutableList<String>>(),
+    val names: MutableList<String> = MutableList<String>()
+) {
+
+    fun use(name: String, wanted: List<String>): Bool {
+        if (name == "") {
+            return false
+        }
+        if (this.topics.contains(name)) {
+            return false
+        }
+        val kept: MutableList<String> = MutableList<String>()
+        var i = 0
+        while (i < wanted.size()) {
+            val topic = wanted.get(i)
+            if (validTopic(topic) && kept.contains(topic) == false) {
+                kept.add(topic)
+            }
+            i = i + 1
+        }
+        this.topics.put(name, kept)
+        this.names.add(name)
+        return true
+    }
+
+    fun unuse(name: String): Bool {
+        if (this.topics.remove(name) == null) {
+            return false
+        }
+        val idx = this.names.indexOf(name)
+        if (idx >= 0) {
+            this.names.remove(idx)
+        }
+        return true
+    }
+
+    fun subscribed(name: String, topic: String): Bool {
+        if (this.topics.contains(name) == false) {
+            return false
+        }
+        return this.topics.get(name)!!.contains(topic)
+    }
+
+    fun plugins(): List<String> {
+        return this.names.freeze()
+    }
+}
+
+fun networkLoggerTopics(): List<String> {
+    return ["request", "response"]
+}

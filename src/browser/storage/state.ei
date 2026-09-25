@@ -1,0 +1,63 @@
+// Storage state (§14) and downloads (§15, rule A).
+//
+// State travels as a value; downloads arrive as handles plus
+// `download.bytes` (small, inline) or `artifact.read` chunks (large).
+
+import { MutableMap } from "std.collections"
+import { JsonValue, jsonObject, jsonString, jsonNumber } from "std.json"
+import { requestFrame } from ".browser.protocol.envelope"
+
+fun storageStateCmd(id: Int, context: String): String? {
+    if (context == "") {
+        return null
+    }
+    val params = MutableMap<String, JsonValue>()
+    params.put("context", jsonString(context))
+    return requestFrame(id, "context.storageState", jsonObject(params.freeze()).write())
+}
+
+type Download(
+    val id: String,
+    val page: String,
+    val fileName: String,
+    val mime: String,
+    val size: Int
+)
+
+fun parseDownload(params: JsonValue): Download? {
+    val id = params.get("download")
+    val page = params.get("page")
+    val name = params.get("fileName")
+    val mime = params.get("mime")
+    val size = params.get("size")
+    if (id == null || page == null || name == null || mime == null || size == null) {
+        return null
+    }
+    if (id!!.isString() == false || page!!.isString() == false) {
+        return null
+    }
+    if (name!!.isString() == false || mime!!.isString() == false || size!!.isNumber() == false) {
+        return null
+    }
+    return Download(id!!.asString(), page!!.asString(), name!!.asString(), mime!!.asString(), size!!.asNumber().toInt())
+}
+
+fun downloadBytesCmd(id: Int, download: String): String? {
+    if (download == "") {
+        return null
+    }
+    val params = MutableMap<String, JsonValue>()
+    params.put("download", jsonString(download))
+    return requestFrame(id, "download.bytes", jsonObject(params.freeze()).write())
+}
+
+fun artifactReadCmd(id: Int, artifact: String, offset: Int, size: Int): String? {
+    if (artifact == "" || offset < 0 || size <= 0) {
+        return null
+    }
+    val params = MutableMap<String, JsonValue>()
+    params.put("artifact", jsonString(artifact))
+    params.put("offset", jsonNumber(offset.toDouble()))
+    params.put("size", jsonNumber(size.toDouble()))
+    return requestFrame(id, "artifact.read", jsonObject(params.freeze()).write())
+}

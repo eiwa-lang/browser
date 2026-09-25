@@ -1,0 +1,57 @@
+// Cookies (§13): value type + command builders.
+
+import { MutableMap } from "std.collections"
+import { JsonValue, jsonObject, jsonString, jsonNumber, jsonBool } from "std.json"
+import { requestFrame } from ".browser.protocol.envelope"
+
+type Cookie(
+    val name: String,
+    val value: String,
+    val domain: String = "",
+    val path: String = "/",
+    val expires: Int = 0,
+    val httpOnly: Bool = false,
+    val secure: Bool = false,
+    val sameSite: String = "Lax"
+)
+
+fun cookieValue(cookie: Cookie): JsonValue {
+    val m = MutableMap<String, JsonValue>()
+    m.put("name", jsonString(cookie.name))
+    m.put("value", jsonString(cookie.value))
+    m.put("domain", jsonString(cookie.domain))
+    m.put("path", jsonString(cookie.path))
+    m.put("expires", jsonNumber(cookie.expires.toDouble()))
+    m.put("httpOnly", jsonBool(cookie.httpOnly))
+    m.put("secure", jsonBool(cookie.secure))
+    m.put("sameSite", jsonString(cookie.sameSite))
+    return jsonObject(m.freeze())
+}
+
+fun cookiesCmd(id: Int, context: String): String? {
+    if (context == "") {
+        return null
+    }
+    val params = MutableMap<String, JsonValue>()
+    params.put("context", jsonString(context))
+    return requestFrame(id, "context.cookies", jsonObject(params.freeze()).write())
+}
+
+fun addCookieCmd(id: Int, context: String, cookie: Cookie): String? {
+    if (context == "" || cookie.name == "") {
+        return null
+    }
+    val params = MutableMap<String, JsonValue>()
+    params.put("context", jsonString(context))
+    params.put("cookie", cookieValue(cookie))
+    return requestFrame(id, "context.addCookie", jsonObject(params.freeze()).write())
+}
+
+fun clearCookiesCmd(id: Int, context: String): String? {
+    if (context == "") {
+        return null
+    }
+    val params = MutableMap<String, JsonValue>()
+    params.put("context", jsonString(context))
+    return requestFrame(id, "context.clearCookies", jsonObject(params.freeze()).write())
+}

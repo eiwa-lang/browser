@@ -1,0 +1,66 @@
+import { assert } from "std.core"
+import { parseJson } from "std.json"
+import { parseRequest, parseResponse } from ".browser.network.network"
+import { Cookie, cookiesCmd, addCookieCmd, clearCookiesCmd } from ".browser.storage.cookies"
+import { storageStateCmd, parseDownload, downloadBytesCmd, artifactReadCmd } from ".browser.storage.state"
+import { PluginRegistry, networkLoggerTopics, validTopic } from ".browser.plugins.plugins"
+import { parseFrame } from ".browser.protocol.envelope"
+
+test "state: network events parse to typed payloads" {
+    val req = parseRequest(parseJson("{\"request\": \"req-1\", \"page\": \"page-7\", \"url\": \"https://a.dev\", \"method\": \"GET\"}"))!!
+    assert(req.id == "req-1")
+    assert(req.method == "GET")
+    assert(parseRequest(parseJson("{\"page\": \"page-7\"}")) == null)
+    val res = parseResponse(parseJson("{\"request\": \"req-1\", \"page\": \"page-7\", \"url\": \"https://a.dev\", \"status\": 200}"))!!
+    assert(res.status == 200)
+    assert(parseResponse(parseJson("{\"request\": \"req-1\", \"status\": \"ok\"}")) == null)
+}
+
+test "state: cookie commands validate name and context" {
+    val rpc = parseFrame(cookiesCmd(1, "ctx-3")!!)
+    assert(rpc.method == "context.cookies")
+    assert(rpc.argumentString("context") == "ctx-3")
+    assert(cookiesCmd(1, "") == null)
+    val cookie = Cookie("sess", "abc", "tribunal.example.gov")
+    val add = parseFrame(addCookieCmd(2, "ctx-3", cookie)!!)
+    assert(add.method == "context.addCookie")
+    assert(add.params.get("cookie")!!.get("name")!!.asString() == "sess")
+    assert(add.params.get("cookie")!!.get("httpOnly")!!.asBool() == false)
+    assert(addCookieCmd(2, "ctx-3", Cookie("", "x")) == null)
+    assert(addCookieCmd(2, "", cookie) == null)
+    assert(clearCookiesCmd(3, "ctx-3") != null)
+    assert(clearCookiesCmd(3, "") == null)
+    val state = parseFrame(storageStateCmd(4, "ctx-3")!!)
+    assert(state.method == "context.storageState")
+}
+
+test "state: downloads parse and fetch by handle" {
+    val dl = parseDownload(parseJson("{\"download\": \"dl-1\", \"page\": \"page-7\", \"fileName\": \"doc.pdf\", \"mime\": \"application/pdf\", \"size\": 41}"))!!
+    assert(dl.fileName == "doc.pdf")
+    assert(dl.size == 41)
+    assert(parseDownload(parseJson("{\"download\": \"dl-1\"}")) == null)
+    assert(parseFrame(downloadBytesCmd(5, "dl-1")!!).method == "download.bytes")
+    assert(downloadBytesCmd(5, "") == null)
+    val chunk = parseFrame(artifactReadCmd(6, "dl-1", 0, 8192)!!)
+    assert(chunk.method == "artifact.read")
+    assert(chunk.argumentInt("size") == 8192)
+    assert(artifactReadCmd(6, "dl-1", -1, 8192) == null)
+    assert(artifactReadCmd(6, "dl-1", 0, 0) == null)
+}
+
+test "state: plugin registry is observe-only in MVP" {
+    assert(validTopic("request"))
+    assert(validTopic("challengeDetected") == false)
+    val reg = PluginRegistry()
+    assert(reg.use("NetworkLogger", networkLoggerTopics()))
+    assert(reg.use("NetworkLogger", networkLoggerTopics()) == false)
+    assert(reg.use("", networkLoggerTopics()) == false)
+    assert(reg.subscribed("NetworkLogger", "request"))
+    assert(reg.subscribed("NetworkLogger", "console") == false)
+    assert(reg.subscribed("Ghost", "request") == false)
+    assert(reg.use("Noisy", ["request", "request", "bogus", "console"]))
+    assert(reg.subscribed("Noisy", "console"))
+    assert(reg.plugins().size() == 2)
+    assert(reg.unuse("Noisy"))
+    assert(reg.unuse("Noisy") == false)
+}

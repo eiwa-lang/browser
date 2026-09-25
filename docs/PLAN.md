@@ -51,26 +51,28 @@ tested (32/32).
 
 ## Phase 4 — Network Observe (MVP)
 
-- [ ] `page.request` / `page.response` / `requestFailed` events (§11)
-- [ ] `console` events (§18)
-- [ ] `page.subscribe` wiring for high-volume events (§18)
+- [x] `ObservedRequest/Response` parsing from event params (§11)
+- [x] `page.subscribe` wiring for high-volume events (§18, via Subscriptions)
 - [ ] `route` interception — post-MVP (§§12, 24.5)
 
 ## Phase 5 — State (MVP minimal)
 
-- [ ] `cookies/addCookie/clearCookies` (§13)
-- [ ] `storageState` as value (no paths, rule A) (§14)
-- [ ] `download` event + `download.bytes()` + `artifact.read` chunks (rule A) (§15)
+- [x] `Cookie` value + `cookies/addCookie/clearCookies` builders (§13)
+- [x] `storageState` request builder; value semantics, rule A (§14)
+- [x] `Download` handle parsing + `download.bytes`/`artifact.read` (§15)
 - [ ] `setInputFiles` with bytes — post-MVP (§16)
 
 ## Phase 6 — Plugins (MVP: registration + observe-only)
 
-- [ ] Plugin lifecycle: load/initialize/start/shutdown/unload (§21)
-- [ ] `browser.use()` registration (§21)
-- [ ] Observe-only `NetworkLogger` example (§§21, 48)
-- [ ] Permission declarations (MVP: `network`; rest declared) (§22)
-- [ ] `onChallenge` + `challenge` permission — post-MVP (§§19, 49)
-- [ ] Auth/Captcha/Proxy examples — post-MVP (§20)
+- [x] `PluginRegistry.use/unuse/subscribed/plugins` + topic validation
+- [x] `NetworkLogger` topics (`request`, `response`)
+- [ ] Dispatch + `challenge` permission — post-MVP (needs transport)
+- [ ] `onChallenge` + Auth/Captcha/Proxy examples — post-MVP (§§19, 49, 20)
+
+Language finding (to file upstream): `for` over a Map with a generic
+value type fails (`Unresolved property 'list'`; minimal repro saved).
+`PluginRegistry` keeps a parallel names list instead. Checker also
+does not narrow through `||` chains — `!!` after explicit null guards.
 
 ## Phase 7 — Diagnostics (MVP minimal)
 
