@@ -35,3 +35,12 @@ jobs:
           tags: |
             eiwac/browser-worker:${{ github.ref_name }}
             eiwac/browser-worker:latest
+
+      - name: Update Docker Hub description
+        uses: peter-evans/dockerhub-description@v4
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          repository: eiwac/browser-worker
+          short-description: "Eiwa Browser Worker: headless Chromium automation over JSON-RPC 2.0."
+          readme-filepath: ./docs/docker-hub-overview.md
