@@ -1651,44 +1651,52 @@ Automation is a capability of Eiwa Browser, not the judicial domain.
 eiwa-browser/
 ├── README.md
 ├── SPEC.md
-├── LICENSE
+├── Dockerfile          (multi-stage worker: toolchain builder +
+│                        Debian/Chromium runtime; pushed by release.yml)
+├── eiwa.yaml
+│
+├── .github/workflows/
+│   ├── ci.yml          (`eiwac/eiwa` image runs `eiwa test` + `eiwa build`)
+│   └── release.yml     (tags `v*` → buildx eiwac/browser-worker:tag+latest)
 │
 ├── protocol/
-│   ├── schema/
 │   ├── protocol.yaml
 │   └── version
 │
 ├── src/
+│   ├── main.ei                 (worker entry: serve PORT)
 │   ├── browser/
-│   ├── context/
-│   ├── page/
-│   ├── locator/
-│   ├── network/
-│   ├── download/
-│   ├── storage/
-│   ├── plugins/
-│   ├── protocol/
-│   ├── chromium/
-│   └── errors/
+│   │   ├── browser.ei          (client handle + pool routing)
+│   │   ├── pool.ei             (WorkerPool)
+│   │   ├── timeouts.ei         (TimeoutConfig)
+│   │   ├── locator/locator.ei
+│   │   ├── network/            (observe payloads, mini HTTP client)
+│   │   ├── net/                (WS client + server, handshake)
+│   │   ├── protocol/           (envelope, errors, commands, dispatch, refs)
+│   │   ├── chromium/           (process lifecycle, CDP attach)
+│   │   ├── context/            (see src/context, §6.2)
+│   │   ├── page/               (see src/page, §6.3)
+│   │   ├── storage/            (cookies, storage state, downloads)
+│   │   ├── plugins/            (registration, observe-only MVP)
+│   │   ├── worker/             (accept loop: WS + /health)
+│   │   ├── diagnostics/        (redaction)
+│   │   ├── challenge/          (post-MVP payload)
+│   │   └── errors/             (planned: typed error mapping)
+│   ├── context/context.ei
+│   └── page/page.ei
 │
-├── tests/
-│   ├── protocol/
-│   ├── browser/
-│   ├── page/
-│   ├── network/
-│   └── plugins/
-│
-├── docker/
-│   └── chromium/
+├── tests/              (one *_test.ei per area; `eiwa test` runs all)
 │
 └── examples/
     ├── basic.eiwa          (connect, newContext/newPage, goto, text, close)
     ├── scraping.eiwa       (locators, waitFor, evaluate)
     ├── network.eiwa        (onRequest/onResponse logging)
-    └── court-example/      (reference consumer service: HTTP-first
-        fallback, pool via Browser.connect, extraction +
-        normalization outside the browser)
+    └── court-example/      (reference consumer service)
 ```
+
+K8s manifests live in the consumer repo, not here (§54).
+
+---
 
 ------------------------------------------------------------------------
 

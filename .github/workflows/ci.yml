@@ -1,0 +1,23 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Eiwa tests (55)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run test suite in toolchain image
+        run: docker run --rm -v "$PWD":/work eiwac/eiwa:latest test
+
+      - name: Build worker binary in toolchain image
+        run: docker run --rm -v "$PWD":/work eiwac/eiwa:latest build
