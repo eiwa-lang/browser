@@ -86,6 +86,8 @@ does not narrow through `||` chains — `!!` after explicit null guards.
 - [x] `healthResponse` builder for k8s probes (§30.1)
 - [ ] Worker accept loop + connection routing (needs `main` binary)
 - [x] Worker accept loop + `main` binary (`serve`/`serveOne`, `src/main.ei`)
+- [x] Docker image validated: boots, `/health` per §30.1, WS `initialize`
+      round-trip against the container (idle accept no longer exits)
 - [x] worker round-trip with >125-byte frames (was blocked on backend:
       `String.substring` used `strncpy`, zeroing bytes after the first
       NUL — fixed in `eiwa-lang` `src/std/core.ei` via `memcpy`, same as
