@@ -86,9 +86,10 @@ does not narrow through `||` chains — `!!` after explicit null guards.
 - [x] `healthResponse` builder for k8s probes (§30.1)
 - [ ] Worker accept loop + connection routing (needs `main` binary)
 - [x] Worker accept loop + `main` binary (`serve`/`serveOne`, `src/main.ei`)
-- [ ] worker round-trip with >125-byte frames — BLOCKED on backend:
-      `eiwa-lang` RED `socket_binary_test.ei` (reads zero bytes after
-      the first NUL; `worker_test.ei` stays red as witness)
+- [x] worker round-trip with >125-byte frames (was blocked on backend:
+      `String.substring` used `strncpy`, zeroing bytes after the first
+      NUL — fixed in `eiwa-lang` `src/std/core.ei` via `memcpy`, same as
+      the existing `String.slice`; `socket_binary_test.ei` green)
 - [ ] Docker worker image (Engine + Chromium, headless) (§§28, 29)
 - [x] Client pool: `Browser.connect(workers, poolSize)`, round-robin,
       sticky contexts, fail-fast eviction (§§5.2, 30.2)
