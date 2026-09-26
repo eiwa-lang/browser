@@ -1,0 +1,50 @@
+import { assert } from "std.core"
+import { parseJson } from "std.json"
+import { cdpRequest, cdpRequestSession, createTargetCmd, attachCmd, navigateCmd, evaluateCmd, closeTargetCmd, parseAttached, parseTargetCreated, parseNavigateFrame, evaluateValue, cdpEventMethod, cdpSessionOf } from ".browser.chromium.cdp_commands"
+
+test "cdp: target lifecycle commands" {
+    val create = parseJson(createTargetCmd(1, "https://example.com")!!)
+    assert(create.get("method")!!.asString() == "Target.createTarget")
+    assert(create.get("params")!!.get("url")!!.asString() == "https://example.com")
+    assert(createTargetCmd(1, "") == null)
+    val target = parseTargetCreated(parseJson("{\"id\": 1, \"result\": {\"targetId\": \"T1\"}}"))!!
+    assert(target == "T1")
+    assert(parseTargetCreated(parseJson("{\"id\": 1, \"error\": {}}")) == null)
+    val attach = parseJson(attachCmd(2, "T1")!!)
+    assert(attach.get("params")!!.get("flatten")!!.asBool())
+    assert(attachCmd(2, "") == null)
+    val session = parseAttached(parseJson("{\"id\": 2, \"result\": {\"sessionId\": \"S1\"}}"))!!
+    assert(session.session == "S1")
+    assert(parseAttached(parseJson("{\"id\": 2, \"result\": {}}")) == null)
+    assert(closeTargetCmd(9, "T1") != null)
+    assert(closeTargetCmd(9, "") == null)
+}
+
+test "cdp: session commands carry sessionId" {
+    val nav = parseJson(navigateCmd(3, "S1", "https://example.com")!!)
+    assert(nav.get("sessionId")!!.asString() == "S1")
+    assert(nav.get("method")!!.asString() == "Page.navigate")
+    assert(navigateCmd(3, "", "https://example.com") == null)
+    assert(navigateCmd(3, "S1", "") == null)
+    val frame = parseNavigateFrame(parseJson("{\"id\": 3, \"result\": {\"frameId\": \"F1\", \"loaderId\": \"L1\"}}"))!!
+    assert(frame == "F1")
+    val ev = parseJson(evaluateCmd(4, "S1", "() => 1")!!)
+    assert(ev.get("method")!!.asString() == "Runtime.evaluate")
+    assert(evaluateCmd(4, "S1", "") == null)
+    val plain = cdpRequest(5, "Target.getTargets", "{}")
+    assert(parseJson(plain).get("id")!!.asNumber().toInt() == 5)
+    val sess = cdpRequestSession(6, "S1", "Page.enable", "{}")
+    assert(parseJson(sess).get("sessionId")!!.asString() == "S1")
+}
+
+test "cdp: evaluate values and load events" {
+    val value = evaluateValue(parseJson("{\"id\": 4, \"result\": {\"result\": {\"type\": \"string\", \"value\": \"hi\"}}}"))!!
+    assert(value.asString() == "hi")
+    assert(evaluateValue(parseJson("{\"id\": 4, \"result\": {\"result\": {\"type\": \"undefined\"}}}")) == null)
+    assert(evaluateValue(parseJson("{\"id\": 4, \"result\": {\"result\": {}, \"exceptionDetails\": {\"text\": \"x\"}}}")) == null)
+    val load = parseJson("{\"method\": \"Page.loadEventFired\", \"params\": {\"timestamp\": 1.5}, \"sessionId\": \"S1\"}")
+    assert(cdpEventMethod(load) == "Page.loadEventFired")
+    assert(cdpSessionOf(load) == "S1")
+    assert(cdpEventMethod(parseJson("{\"id\": 1}")) == "")
+    assert(cdpSessionOf(parseJson("{\"id\": 1}")) == "")
+}

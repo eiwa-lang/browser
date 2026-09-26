@@ -1,0 +1,131 @@
+// CDP command builders and payload parsing (flat mode).
+//
+// Frames travel over the browser WS client; ids are per-connection,
+// routing per `sessionId`. Shapes follow the DevTools protocol.
+
+import { MutableMap } from "std.collections"
+import { JsonValue, jsonObject, jsonString, jsonBool } from "std.json"
+
+fun cdpRequest(id: Int, method: String, params: String): String {
+    return "{\"id\": $id, \"method\": \"$method\", \"params\": $params}"
+}
+
+fun cdpRequestSession(id: Int, session: String, method: String, params: String): String {
+    return "{\"id\": $id, \"sessionId\": \"$session\", \"method\": \"$method\", \"params\": $params}"
+}
+
+fun createTargetCmd(id: Int, url: String): String? {
+    if (url == "") {
+        return null
+    }
+    val params = MutableMap<String, JsonValue>()
+    params.put("url", jsonString(url))
+    return cdpRequest(id, "Target.createTarget", jsonObject(params.freeze()).write())
+}
+
+fun attachCmd(id: Int, target: String): String? {
+    if (target == "") {
+        return null
+    }
+    val params = MutableMap<String, JsonValue>()
+    params.put("targetId", jsonString(target))
+    params.put("flatten", jsonBool(true))
+    return cdpRequest(id, "Target.attachToTarget", jsonObject(params.freeze()).write())
+}
+
+fun navigateCmd(id: Int, session: String, url: String): String? {
+    if (session == "" || url == "") {
+        return null
+    }
+    val params = MutableMap<String, JsonValue>()
+    params.put("url", jsonString(url))
+    return cdpRequestSession(id, session, "Page.navigate", jsonObject(params.freeze()).write())
+}
+
+fun evaluateCmd(id: Int, session: String, script: String): String? {
+    if (session == "" || script == "") {
+        return null
+    }
+    val params = MutableMap<String, JsonValue>()
+    params.put("expression", jsonString(script))
+    params.put("returnByValue", jsonBool(true))
+    return cdpRequestSession(id, session, "Runtime.evaluate", jsonObject(params.freeze()).write())
+}
+
+fun closeTargetCmd(id: Int, target: String): String? {
+    if (target == "") {
+        return null
+    }
+    val params = MutableMap<String, JsonValue>()
+    params.put("targetId", jsonString(target))
+    return cdpRequest(id, "Target.closeTarget", jsonObject(params.freeze()).write())
+}
+
+type CdpSession(val target: String, val session: String)
+
+fun parseAttached(result: JsonValue): CdpSession? {
+    val res = result.get("result")
+    if (res == null) {
+        return null
+    }
+    val session = res!!.get("sessionId")
+    if (session == null || session!!.isString() == false) {
+        return null
+    }
+    return CdpSession("", session!!.asString())
+}
+
+fun parseTargetCreated(result: JsonValue): String? {
+    val res = result.get("result")
+    if (res == null) {
+        return null
+    }
+    val target = res!!.get("targetId")
+    if (target == null || target!!.isString() == false) {
+        return null
+    }
+    return target!!.asString()
+}
+
+fun parseNavigateFrame(result: JsonValue): String? {
+    val res = result.get("result")
+    if (res == null) {
+        return null
+    }
+    val frame = res!!.get("frameId")
+    if (frame == null || frame!!.isString() == false) {
+        return null
+    }
+    return frame!!.asString()
+}
+
+fun evaluateValue(result: JsonValue): JsonValue? {
+    val res = result.get("result")
+    if (res == null) {
+        return null
+    }
+    if (res!!.get("exceptionDetails") != null) {
+        return null
+    }
+    val remote = res!!.get("result")
+    if (remote == null) {
+        return null
+    }
+    return remote!!.get("value")
+}
+
+fun cdpEventMethod(raw: JsonValue): String {
+    val method = raw.get("method")
+    if (method == null || method!!.isString() == false) {
+        return ""
+    }
+    return method!!.asString()
+}
+
+fun cdpSessionOf(raw: JsonValue): String {
+    val session = raw.get("sessionId")
+    if (session == null || session!!.isString() == false) {
+        return ""
+    }
+    return session!!.asString()
+}
