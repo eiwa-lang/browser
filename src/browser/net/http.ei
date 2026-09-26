@@ -1,0 +1,76 @@
+// Minimal HTTP GET over std.net TCP (task context).
+//
+// Only what the engine needs: DevTools `/json/version` (short bodies,
+// Connection: close). Not a general client — use arest for that.
+
+import { NativeMemory } from "std.core"
+import { Socket, SocketClient } from "std.net"
+import { readExact, writeAll } from ".browser.net.ws"
+
+type HttpMini(val status: Int, val body: String)
+
+fun parseStatus(line: String): Int {
+    val first = line.indexOf(" ")
+    if (first < 0 || first + 3 >= line.length) {
+        return -1
+    }
+    val d0 = NativeMemory.readByte(line.ptr!!, first + 1) - 48
+    val d1 = NativeMemory.readByte(line.ptr!!, first + 2) - 48
+    val d2 = NativeMemory.readByte(line.ptr!!, first + 3) - 48
+    if (d0 < 0 || d0 > 9 || d1 < 0 || d1 > 9 || d2 < 0 || d2 > 9) {
+        return -1
+    }
+    return d0 * 100 + d1 * 10 + d2
+}
+
+fun readHttpResponse(sock: Socket): HttpMini? {
+    var head = ""
+    while (head.indexOf("\r\n\r\n") < 0) {
+        if (head.length > 8192) {
+            return null
+        }
+        val chunk = sock.read(1024)
+        if (chunk == "") {
+            return null
+        }
+        head = head + chunk
+    }
+    val end = head.indexOf("\r\n\r\n")
+    val lines = head.substring(0, end).split("\r\n")
+    if (lines.size() == 0) {
+        return null
+    }
+    val status = parseStatus(lines.get(0))
+    if (status < 0) {
+        return null
+    }
+    var body = head.substring(end + 4, head.length)
+    var closed = false
+    while (closed == false && body.length < 1048576) {
+        val chunk = sock.read(4096)
+        if (chunk == "") {
+            closed = true
+        } else {
+            body = body + chunk
+        }
+    }
+    return HttpMini(status, body)
+}
+
+fun httpGet(host: String, port: Int, path: String): HttpMini? {
+    val sock = SocketClient.connect(host, port)
+    if (sock == null) {
+        return null
+    }
+    var req = "GET $path HTTP/1.0\r\n"
+    req = req + "Host: $host\r\n"
+    req = req + "Connection: close\r\n"
+    req = req + "\r\n"
+    if (writeAll(sock, req) == false) {
+        sock.close()
+        return null
+    }
+    val res = readHttpResponse(sock)
+    sock.close()
+    return res
+}

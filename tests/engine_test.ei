@@ -1,0 +1,86 @@
+import { assert } from "std.core"
+import { TCPServer } from "std.net"
+import { sleepMs } from "std.time"
+import { chromiumArgs, launchChromium, Chromium } from ".browser.chromium.chromium"
+import { parseStatus, httpGet } from ".browser.net.http"
+import { debuggerUrl } from ".browser.chromium.cdp"
+
+test "engine: chromium launch validates input" {
+    assert(launchChromium("", 9222) == null)
+    assert(launchChromium("eiwa-definitely-missing-binary-xyz", 9222) == null)
+    assert(launchChromium("sleep", 0) == null)
+    val dead = Chromium("sleep", 9222, -1)
+    assert(dead.alive() == false)
+    assert(dead.devtoolsUrl() == "http://localhost:9222")
+}
+
+test "engine: chromium args run headless on a fixed port" {
+    val args = chromiumArgs(9222)
+    assert(args.contains("--headless"))
+    assert(args.contains("--no-sandbox"))
+    assert(args.contains("--remote-debugging-port=9222"))
+    assert(args.contains("about:blank"))
+}
+
+test "engine: status line parses the code" {
+    assert(parseStatus("HTTP/1.1 200 OK") == 200)
+    assert(parseStatus("HTTP/1.0 404 Not Found") == 404)
+    assert(parseStatus("garbage") == -1)
+    assert(parseStatus("HTTP/1.1 99x OK") == -1)
+}
+
+fun fakeVersionServer(port: Int, body: String): String {
+    val server = TCPServer()
+    if (server.bind(port) == false) {
+        return "bind-fail"
+    }
+    val conn = server.accept()
+    if (conn == null) {
+        server.close()
+        return "accept-fail"
+    }
+    var req = ""
+    while (req.indexOf("\r\n\r\n") < 0) {
+        val chunk = conn.read(1024)
+        if (chunk == "") {
+            conn.close()
+            server.close()
+            return "read-fail"
+        }
+        req = req + chunk
+    }
+    var res = "HTTP/1.0 200 OK\r\n"
+    res = res + "Content-Type: application/json\r\n"
+    res = res + "Connection: close\r\n"
+    res = res + "\r\n"
+    res = res + body
+    var sent = 0
+    while (sent < res.length) {
+        val n = conn.write(res.substring(sent, res.length))
+        if (n <= 0) {
+            conn.close()
+            server.close()
+            return "write-fail"
+        }
+        sent = sent + n
+    }
+    conn.close()
+    server.close()
+    return "ok"
+}
+
+test "engine: httpGet reads a version endpoint" {
+    val port = 19877
+    val body = "{\"webSocketDebuggerUrl\": \"ws://localhost:9222/devtools/browser/abc\"}"
+    val server = task {
+        fakeVersionServer(port, body)
+    }
+    sleepMs(150)
+    val res = httpGet("127.0.0.1", port, "/json/version")
+    assert(server.await() == "ok")
+    assert(res != null)
+    assert(res!!.status == 200)
+    assert(debuggerUrl(res!!.body) == "ws://localhost:9222/devtools/browser/abc")
+    assert(debuggerUrl("{}") == null)
+    assert(httpGet("127.0.0.1", 1, "/json/version") == null)
+}

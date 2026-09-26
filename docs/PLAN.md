@@ -29,17 +29,14 @@ narrows after an early-return null check (redundant `!!` warns).
 - [x] `BrowserContext` / `Page` handles + cascade close (§§6.2, 6.3)
 - [x] `ProxyRegistry.childrenOf` for `pages()`/`contexts()`
 - [x] Real WebSocket transport: pure-Eiwa RFC 6455 client (`net/ws.ei`)
-- [ ] Chromium spawn/manage + CDP session — BLOCKED, see below
+- [x] Chromium lifecycle: headless fixed-port spawn + terminate (§§28, 29)
+- [x] Minimal HTTP GET + `/json/version` debugger-URL parse (CDP attach)
+- [ ] Live CDP session against real Chromium (needs Chromium binary/CI)
 - [ ] `Browser`/`Context`/`Page` managers, `Chromium Adapter` (§§5.4, 5.5)
 
-BLOCKER (reported, no workaround applied): `std.process` offers only
-blocking `exec`/`capture` — no background spawn/kill for a long-lived
-Chromium. The WS half is done in pure Eiwa (handshake with accept
-verification via the crypto lib's new SHA-1/standard-base64, masking,
-ping/pong, close; loopback integration test green). Remaining need:
-(a) `std` gains background process spawn, or (b) engine transport
-ships as a native helper outside Eiwa. Pure client logic + WS done and
-tested (32/32).
+`std.process` blocker resolved by `eiwa-lang@d54fc13`
+(spawn/alive/kill/wait/terminate). Remaining engine work needs a live
+Chromium (Docker/CI); all attach primitives are done and tested (49/49).
 
 ## Phase 3 — Basic Automation (MVP)
 

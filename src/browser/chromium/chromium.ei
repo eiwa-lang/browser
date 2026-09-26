@@ -1,0 +1,38 @@
+// Chromium process lifecycle (§§28, 29).
+//
+// Launched headless with a fixed remote-debugging port, so the engine
+// attaches via plain WebSocket + HTTP (no stderr parsing). Managed
+// through std Process.spawn/terminate.
+
+import { List } from "std.collections"
+import { Process } from "std.process"
+
+fun chromiumArgs(port: Int): List<String> {
+    return ["--headless", "--no-sandbox", "--disable-gpu", "--remote-debugging-port=$port", "about:blank"]
+}
+
+type Chromium(val exe: String, val port: Int, val token: Int) {
+
+    fun alive(): Bool {
+        return Process.alive(this.token)
+    }
+
+    fun stop(): Bool {
+        return Process.terminate(this.token)
+    }
+
+    fun devtoolsUrl(): String {
+        return "http://localhost:$port"
+    }
+}
+
+fun launchChromium(exe: String, port: Int): Chromium? {
+    if (exe == "" || port <= 0) {
+        return null
+    }
+    val token = Process.spawn(exe, chromiumArgs(port))
+    if (token <= 0) {
+        return null
+    }
+    return Chromium(exe, port, token)
+}

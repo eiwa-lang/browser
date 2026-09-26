@@ -1,0 +1,12 @@
+// CDP attach helpers: extract the debugger URL from /json/version.
+
+import { parseJson } from "std.json"
+
+fun debuggerUrl(versionBody: String): String? {
+    val root = parseJson(versionBody)
+    val url = root.get("webSocketDebuggerUrl")
+    if (url == null || url!!.isString() == false) {
+        return null
+    }
+    return url!!.asString()
+}
