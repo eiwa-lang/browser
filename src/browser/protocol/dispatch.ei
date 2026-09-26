@@ -1,0 +1,36 @@
+// Engine request dispatch (pure): JSON-RPC method → response frame.
+//
+// Unimplemented engine methods answer METHOD_NOT_FOUND (honest stub)
+// until the Chromium Adapter lands. Notifications get no reply ("").
+
+import { BrowserError } from ".browser.protocol.errors"
+import { parseFrame, isNotification, resultFrame, errorFrame } from ".browser.protocol.envelope"
+
+fun protocolVersion(): String = "1.0"
+
+fun serverCapabilities(): String {
+    return "[\"browser\", \"context\", \"page\", \"network\", \"downloads\", \"plugins\"]"
+}
+
+fun dispatch(raw: String): String {
+    if (isNotification(raw)) {
+        return ""
+    }
+    val rpc = parseFrame(raw)
+    if (rpc.method == "initialize") {
+        return resultFrame(rpc.id, "{\"protocol\": \"eiwa-browser\", \"version\": \"${protocolVersion()}\", \"capabilities\": ${serverCapabilities()}}")
+    }
+    if (rpc.method == "browser.version") {
+        return resultFrame(rpc.id, "{\"version\": \"${protocolVersion()}\"}")
+    }
+    return errorFrame(rpc.id, BrowserError("METHOD_NOT_FOUND", "Method not found: ${rpc.method}", false))
+}
+
+fun healthBody(browsers: Int, contexts: Int): String {
+    return "{\"status\": \"ok\", \"protocol\": \"eiwa-browser\", \"version\": \"${protocolVersion()}\", \"browsers\": $browsers, \"contexts\": $contexts}"
+}
+
+fun healthResponse(browsers: Int, contexts: Int): String {
+    val body = healthBody(browsers, contexts)
+    return "HTTP/1.0 200 OK\r\nContent-Type: application/json\r\nContent-Length: ${body.length}\r\nConnection: close\r\n\r\n$body"
+}

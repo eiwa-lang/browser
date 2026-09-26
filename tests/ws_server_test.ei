@@ -1,0 +1,106 @@
+import { assert } from "std.core"
+import { parseJson } from "std.json"
+import { TCPServer } from "std.net"
+import { sleepMs } from "std.time"
+import { buildFrame, wsRecv, writeAll, wsConnect } from ".browser.net.ws"
+import { requestFrame, notifyFrame } from ".browser.protocol.envelope"
+import { wsRequestKey, handshakeResponse, wsAcceptConn } from ".browser.net.ws_server"
+import { dispatch, healthBody, healthResponse, protocolVersion } from ".browser.protocol.dispatch"
+
+test "server: key extraction and 101 builder" {
+    val req = "GET /chat HTTP/1.1\r\nHost: x\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n"
+    assert(wsRequestKey(req) == "dGhlIHNhbXBsZSBub25jZQ==")
+    assert(wsRequestKey("GET / HTTP/1.1\r\n\r\n") == null)
+    val res = handshakeResponse("dGhlIHNhbXBsZSBub25jZQ==")
+    assert(res.indexOf("HTTP/1.1 101") == 0)
+    assert(res.indexOf("s3pPLMBiTxaQ9kYGzzhZRbK+xOo=") > 0)
+}
+
+test "server: dispatch answers initialize, version and unknown" {
+    val init = parseJson(dispatch(requestFrame(1, "initialize", "{\"protocol\": \"eiwa-browser\", \"version\": \"1.0\"}")))
+    assert(init.get("result")!!.get("protocol")!!.asString() == "eiwa-browser")
+    assert(init.get("result")!!.get("version")!!.asString() == protocolVersion())
+    assert(dispatch(requestFrame(1, "initialize", "{}")).indexOf("\"downloads\"") > 0)
+    val ver = parseJson(dispatch(requestFrame(2, "browser.version", "{}")))
+    assert(ver.get("result")!!.get("version")!!.asString() == "1.0")
+    val missing = parseJson(dispatch(requestFrame(3, "page.fly", "{}")))
+    assert(missing.get("error")!!.get("code")!!.asNumber().toInt() == -32601)
+    assert(dispatch(notifyFrame("page.navigated", "{}")) == "")
+}
+
+test "server: health body carries counts" {
+    val body = parseJson(healthBody(2, 5))
+    assert(body.get("status")!!.asString() == "ok")
+    assert(body.get("browsers")!!.asNumber().toInt() == 2)
+    assert(body.get("contexts")!!.asNumber().toInt() == 5)
+    val res = healthResponse(2, 5)
+    assert(res.indexOf("HTTP/1.0 200 OK") == 0)
+    assert(res.indexOf("application/json") > 0)
+}
+
+fun fakeWsServer(port: Int): String {
+    val server = TCPServer()
+    if (server.bind(port) == false) {
+        return "bind-fail"
+    }
+    val conn = server.accept()
+    if (conn == null) {
+        server.close()
+        return "accept-fail"
+    }
+    if (wsAcceptConn(conn) == false) {
+        server.close()
+        return "handshake-fail"
+    }
+    val f = wsRecv(conn)
+    if (f == null) {
+        conn.close()
+        server.close()
+        return "frame-fail"
+    }
+    if (writeAll(conn, buildFrame(1, "pong:${f.payload}", null)) == false) {
+        conn.close()
+        server.close()
+        return "echo-fail"
+    }
+    val bye = wsRecv(conn)
+    conn.close()
+    server.close()
+    if (bye == null) {
+        return "close-fail"
+    }
+    if (bye.opcode == 8) {
+        return "ok"
+    }
+    return "opcode:${bye.opcode}"
+}
+
+fun wsPingClient(port: Int): String {
+    val ws = wsConnect("127.0.0.1", port, "/engine")
+    if (ws == null) {
+        return "connect-fail"
+    }
+    if (ws.sendText("ping-1") == false) {
+        ws.close()
+        return "send-fail"
+    }
+    val got = ws.recv()
+    ws.close()
+    if (got == null) {
+        return "recv-fail"
+    }
+    return got
+}
+
+test "server: client and server round-trip" {
+    val port = 19878
+    val server = task {
+        fakeWsServer(port)
+    }
+    sleepMs(150)
+    val client = task {
+        wsPingClient(port)
+    }
+    assert(client.await() == "pong:ping-1")
+    assert(server.await() == "ok")
+}

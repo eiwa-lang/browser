@@ -3,21 +3,7 @@ import { NativeMemory } from "std.core"
 import { TCPServer } from "std.net"
 import { sleepMs } from "std.time"
 import { xorByte, wsAccept, applyMask, randomMask, parseHeader, buildFrame, validHandshake, wsRecv, writeAll, wsConnect } from ".browser.net.ws"
-
-fun readHttpRequest(sock: Socket): String? {
-    var req = ""
-    while (req.indexOf("\r\n\r\n") < 0) {
-        if (req.length > 8192) {
-            return null
-        }
-        val chunk = sock.read(1024)
-        if (chunk == "") {
-            return null
-        }
-        req = req + chunk
-    }
-    return req
-}
+import { readHttpRequest } from ".browser.net.ws_server"
 
 test "ws: xor is bitwise-correct" {
     assert(xorByte(0, 0) == 0)

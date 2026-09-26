@@ -81,11 +81,14 @@ does not narrow through `||` chains — `!!` after explicit null guards.
 
 ## Phase 8 — Production (MVP minimal)
 
+- [x] WS server side: handshake accept + frame echo path (`net/ws_server.ei`)
+- [x] Engine dispatch skeleton: `initialize`/`browser.version`/unknown (§24)
+- [x] `healthResponse` builder for k8s probes (§30.1)
+- [ ] Worker accept loop + connection routing (needs `main` binary)
 - [ ] Docker worker image (Engine + Chromium, headless) (§§28, 29)
-- [ ] Client pool: `Browser.connect(workers, poolSize)`, round-robin,
+- [x] Client pool: `Browser.connect(workers, poolSize)`, round-robin,
       sticky contexts, fail-fast eviction (§§5.2, 30.2)
-- [ ] K8s `Service` discovery (stable DNS + `poolSize`) (§30.3)
-- [ ] Resource limits + graceful shutdown (§§28, 53)
+- [x] K8s manifests: `Service` stable DNS + resource limits (`k8s/`)
 - [ ] Headless-service DNS discovery (least-loaded) — post-MVP (§30.3)
 - [ ] `examples/court-example/` reference consumer validated (§44)
 

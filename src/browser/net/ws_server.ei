@@ -1,0 +1,64 @@
+// WebSocket server side (RFC 6455 §4.2).
+//
+// Mirrors `.browser.net.ws`: reads the HTTP Upgrade request, answers
+// 101 with our accept key, then frames flow via `wsRecv`/`buildFrame`
+// (server frames are unmasked).
+
+import { Socket } from "std.net"
+import { writeAll, wsAccept } from ".browser.net.ws"
+
+fun wsRequestKey(req: String): String? {
+    val lines = req.split("\r\n")
+    var i = 0
+    while (i < lines.size()) {
+        val line = lines.get(i)
+        if (line.indexOf("Sec-WebSocket-Key:") == 0) {
+            val colon = line.indexOf(":")
+            return line.substring(colon + 1, line.length).trim()
+        }
+        i = i + 1
+    }
+    return null
+}
+
+fun handshakeResponse(key: String): String {
+    var res = "HTTP/1.1 101 Switching Protocols\r\n"
+    res = res + "Upgrade: websocket\r\n"
+    res = res + "Connection: Upgrade\r\n"
+    res = res + "Sec-WebSocket-Accept: ${wsAccept(key)}\r\n"
+    res = res + "\r\n"
+    return res
+}
+
+fun readHttpRequest(sock: Socket): String? {
+    var req = ""
+    while (req.indexOf("\r\n\r\n") < 0) {
+        if (req.length > 8192) {
+            return null
+        }
+        val chunk = sock.read(1024)
+        if (chunk == "") {
+            return null
+        }
+        req = req + chunk
+    }
+    return req
+}
+
+fun wsAcceptConn(sock: Socket): Bool {
+    val req = readHttpRequest(sock)
+    if (req == null) {
+        sock.close()
+        return false
+    }
+    val key = wsRequestKey(req)
+    if (key == null || key == "") {
+        sock.close()
+        return false
+    }
+    if (writeAll(sock, handshakeResponse(key!!)) == false) {
+        sock.close()
+        return false
+    }
+    return true
+}
