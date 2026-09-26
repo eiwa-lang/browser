@@ -1,0 +1,35 @@
+import { assert } from "std.core"
+import { parseJson } from "std.json"
+import { sleepMs } from "std.time"
+import { serve, routeOf } from ".browser.worker.server"
+import { httpGet } from ".browser.net.http"
+import { wsConnect } from ".browser.net.ws"
+import { requestFrame } from ".browser.protocol.envelope"
+
+test "worker: routes websocket, health and garbage" {
+    assert(routeOf("GET /chat HTTP/1.1\r\nUpgrade: websocket\r\n\r\n") == "ws")
+    assert(routeOf("GET /health HTTP/1.0\r\n\r\n") == "health")
+    assert(routeOf("GET /nope HTTP/1.0\r\n\r\n") == "bad")
+    assert(routeOf("") == "bad")
+}
+
+test "worker: health and initialize round-trip" {
+    val port = 19879
+    val server = task {
+        serve(port, 2)
+    }
+    sleepMs(150)
+    val health = httpGet("127.0.0.1", port, "/health")
+    assert(health != null)
+    assert(health!!.status == 200)
+    assert(parseJson(health!!.body).get("protocol")!!.asString() == "eiwa-browser")
+    val ws = wsConnect("127.0.0.1", port, "/")
+    assert(ws != null)
+    assert(ws!!.sendText(requestFrame(1, "initialize", "{}")))
+    val got = ws!!.recv()
+    ws!!.close()
+    assert(server.await() == 2)
+    assert(got != null)
+    val res = parseJson(got!!)
+    assert(res.get("result")!!.get("version")!!.asString() == "1.0")
+}

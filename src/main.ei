@@ -1,0 +1,7 @@
+import { Env } from "std.env"
+import { serve } from ".browser.worker.server"
+
+fun main() {
+    val port = Env.get("PORT", 8080)
+    serve(port, -1)
+}

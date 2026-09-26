@@ -1,0 +1,83 @@
+// Worker accept loop: one TCP port serves WS + /health (§§30, 54).
+//
+// Sequential per connection in MVP (task-per-connection is the
+// production follow-up). Engine state (browser/context counts) wires in
+// with the Chromium Adapter; currently reported as zero.
+
+import { Socket, TCPServer } from "std.net"
+import { wsRecv, buildFrame, writeAll } from ".browser.net.ws"
+import { readHttpRequest, answerHandshake } from ".browser.net.ws_server"
+import { dispatch, healthResponse } from ".browser.protocol.dispatch"
+
+fun routeOf(head: String): String {
+    if (head.indexOf("Upgrade: websocket") >= 0) {
+        return "ws"
+    }
+    if (head.indexOf("GET /health") == 0) {
+        return "health"
+    }
+    return "bad"
+}
+
+fun serveFrames(sock: Socket): Void {
+    var open = true
+    while (open) {
+        val f = wsRecv(sock)
+        if (f == null) {
+            open = false
+        } else if (f.opcode == 8) {
+            writeAll(sock, buildFrame(8, "", null))
+            open = false
+        } else if (f.opcode == 9) {
+            writeAll(sock, buildFrame(10, f.payload, null))
+        } else if (f.opcode == 1 || f.opcode == 2) {
+            val reply = dispatch(f.payload)
+            if (reply != "") {
+                writeAll(sock, buildFrame(1, reply, null))
+            }
+        }
+    }
+    sock.close()
+}
+
+fun serveOne(sock: Socket, browsers: Int, contexts: Int): String {
+    val head = readHttpRequest(sock)
+    if (head == null) {
+        sock.close()
+        return "bad"
+    }
+    val route = routeOf(head)
+    if (route == "health") {
+        writeAll(sock, healthResponse(browsers, contexts))
+        sock.close()
+        return "health"
+    }
+    if (route == "ws") {
+        if (answerHandshake(sock, head) == false) {
+            return "bad"
+        }
+        serveFrames(sock)
+        return "ws"
+    }
+    sock.close()
+    return "bad"
+}
+
+fun serve(port: Int, maxConn: Int): Int {
+    val server = TCPServer()
+    if (server.bind(port) == false) {
+        return -1
+    }
+    var served = 0
+    while (maxConn < 0 || served < maxConn) {
+        val conn = server.accept()
+        if (conn == null) {
+            server.close()
+            return served
+        }
+        serveOne(conn, 0, 0)
+        served = served + 1
+    }
+    server.close()
+    return served
+}

@@ -85,6 +85,10 @@ does not narrow through `||` chains — `!!` after explicit null guards.
 - [x] Engine dispatch skeleton: `initialize`/`browser.version`/unknown (§24)
 - [x] `healthResponse` builder for k8s probes (§30.1)
 - [ ] Worker accept loop + connection routing (needs `main` binary)
+- [x] Worker accept loop + `main` binary (`serve`/`serveOne`, `src/main.ei`)
+- [ ] worker round-trip with >125-byte frames — BLOCKED on backend:
+      `eiwa-lang` RED `socket_binary_test.ei` (reads zero bytes after
+      the first NUL; `worker_test.ei` stays red as witness)
 - [ ] Docker worker image (Engine + Chromium, headless) (§§28, 29)
 - [x] Client pool: `Browser.connect(workers, poolSize)`, round-robin,
       sticky contexts, fail-fast eviction (§§5.2, 30.2)

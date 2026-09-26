@@ -51,7 +51,11 @@ fun wsAcceptConn(sock: Socket): Bool {
         sock.close()
         return false
     }
-    val key = wsRequestKey(req)
+    return answerHandshake(sock, req)
+}
+
+fun answerHandshake(sock: Socket, head: String): Bool {
+    val key = wsRequestKey(head)
     if (key == null || key == "") {
         sock.close()
         return false
