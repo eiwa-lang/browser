@@ -25,10 +25,13 @@ COPY src src
 RUN eiwa build -o worker && mkdir -p /out && mv worker /out/worker
 
 FROM debian:trixie-slim
+# Native worker links Boehm GC + OpenSSL (crypto dep) at runtime.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         chromium \
         fonts-liberation \
         ca-certificates \
+        libgc1 \
+        libssl3 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /out/worker /usr/local/bin/worker

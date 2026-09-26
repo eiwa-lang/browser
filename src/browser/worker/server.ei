@@ -69,14 +69,22 @@ fun serve(port: Int, maxConn: Int): Int {
         return -1
     }
     var served = 0
+    var idle = 0
+    // accept() returns null on its 250ms idle timeout too, so null only
+    // stops a bounded run after a long silence; unbounded runs forever.
     while (maxConn < 0 || served < maxConn) {
         val conn = server.accept()
         if (conn == null) {
-            server.close()
-            return served
+            idle = idle + 1
+            if (maxConn >= 0 && idle > 1200) {
+                server.close()
+                return served
+            }
+        } else {
+            idle = 0
+            serveOne(conn, 0, 0)
+            served = served + 1
         }
-        serveOne(conn, 0, 0)
-        served = served + 1
     }
     server.close()
     return served
