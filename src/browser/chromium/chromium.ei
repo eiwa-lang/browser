@@ -8,7 +8,7 @@ import { List } from "std.collections"
 import { Process } from "std.process"
 
 fun chromiumArgs(port: Int): List<String> {
-    return ["--headless", "--no-sandbox", "--disable-gpu", "--remote-debugging-port=$port", "about:blank"]
+    return ["--headless", "--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage", "--remote-debugging-port=$port", "about:blank"]
 }
 
 type Chromium(val exe: String, val port: Int, val token: Int) {

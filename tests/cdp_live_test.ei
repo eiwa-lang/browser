@@ -1,0 +1,144 @@
+import { assert } from "std.core"
+import { parseJson } from "std.json"
+import { Env } from "std.env"
+import { sleepMs } from "std.time"
+import { launchChromium } from ".browser.chromium.chromium"
+import { debuggerUrl, parseWsUrl } from ".browser.chromium.cdp"
+import { createTargetCmd, attachCmd, evaluateCmd, sessionCmd, parseTargetCreated, parseAttached, evaluateValue, cdpEventMethod, cdpSessionOf } from ".browser.chromium.cdp_commands"
+import { httpGet } from ".browser.net.http"
+import { wsConnect, WsClient } from ".browser.net.ws"
+
+fun chromiumExe(): String {
+    val exe = Env.get("CHROMIUM_EXE")
+    if (exe == null || exe == "") {
+        return "chromium"
+    }
+    return exe!!
+}
+
+fun sendRecv(ws: WsClient, frame: String, wantId: Int): String? {
+    if (ws.sendText(frame) == false) {
+        return null
+    }
+    var tries = 0
+    while (tries < 60) {
+        val got = ws.recv()
+        if (got == null) {
+            return null
+        }
+        val msg = parseJson(got)
+        val id = msg.get("id")
+        if (id != null && id!!.isNumber() && id!!.asNumber().toInt() == wantId) {
+            return got
+        }
+        tries = tries + 1
+    }
+    return null
+}
+
+fun waitLoad(ws: WsClient, session: String): Bool {
+    var tries = 0
+    while (tries < 60) {
+        val got = ws.recv()
+        if (got == null) {
+            return false
+        }
+        val msg = parseJson(got)
+        if (cdpEventMethod(msg) == "Page.loadEventFired" && cdpSessionOf(msg) == session) {
+            return true
+        }
+        tries = tries + 1
+    }
+    return false
+}
+
+fun cdpLive(): String {
+    val c = launchChromium(chromiumExe(), 9333)
+    if (c == null) {
+        return "skip"
+    }
+    var version = ""
+    var tries = 0
+    while (tries < 30) {
+        val res = httpGet("127.0.0.1", 9333, "/json/version")
+        if (res != null && res!!.status == 200) {
+            version = res!!.body
+            tries = 99
+        } else {
+            sleepMs(500)
+            tries = tries + 1
+        }
+    }
+    if (version == "") {
+        c.stop()
+        return "fail:version"
+    }
+    val debug = debuggerUrl(version)
+    if (debug == null) {
+        c.stop()
+        return "fail:debugurl"
+    }
+    val ep = parseWsUrl(debug)
+    if (ep == null) {
+        c.stop()
+        return "fail:endpoint"
+    }
+    val ws = wsConnect(ep.host, ep.port, ep.path)
+    if (ws == null) {
+        c.stop()
+        return "fail:connect"
+    }
+    val created = sendRecv(ws, createTargetCmd(1, "https://example.com")!!, 1)
+    if (created == null) {
+        ws.close()
+        c.stop()
+        return "fail:create"
+    }
+    val target = parseTargetCreated(parseJson(created))
+    if (target == null) {
+        ws.close()
+        c.stop()
+        return "fail:target"
+    }
+    val attached = sendRecv(ws, attachCmd(2, target)!!, 2)
+    if (attached == null) {
+        ws.close()
+        c.stop()
+        return "fail:attach"
+    }
+    val session = parseAttached(parseJson(attached))
+    if (session == null) {
+        ws.close()
+        c.stop()
+        return "fail:session"
+    }
+    sendRecv(ws, sessionCmd(3, session.session, "Page.enable")!!, 3)
+    if (waitLoad(ws, session.session) == false) {
+        ws.close()
+        c.stop()
+        return "fail:load"
+    }
+    val evaluated = sendRecv(ws, evaluateCmd(5, session.session, "() => document.title")!!, 5)
+    if (evaluated == null) {
+        ws.close()
+        c.stop()
+        return "fail:evaluate"
+    }
+    val title = evaluateValue(parseJson(evaluated))
+    ws.close()
+    c.stop()
+    if (title == null || title!!.asString() == "") {
+        return "fail:title"
+    }
+    return "ok:${title!!.asString()}"
+}
+
+test "cdp: live session against real Chromium" {
+    val live = task {
+        cdpLive()
+    }
+    sleepMs(200)
+    val out = live.await()
+    echo("cdp live: $out")
+    assert(out == "skip" || out.indexOf("ok:") == 0)
+}

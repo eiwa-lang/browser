@@ -61,6 +61,13 @@ fun closeTargetCmd(id: Int, target: String): String? {
     return cdpRequest(id, "Target.closeTarget", jsonObject(params.freeze()).write())
 }
 
+fun sessionCmd(id: Int, session: String, method: String): String? {
+    if (session == "" || method == "") {
+        return null
+    }
+    return cdpRequestSession(id, session, method, "{}")
+}
+
 type CdpSession(val target: String, val session: String)
 
 fun parseAttached(result: JsonValue): CdpSession? {

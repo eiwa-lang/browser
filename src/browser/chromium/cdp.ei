@@ -1,6 +1,7 @@
 // CDP attach helpers: extract the debugger URL from /json/version.
 
 import { parseJson } from "std.json"
+import { NativeMemory } from "std.core"
 
 fun debuggerUrl(versionBody: String): String? {
     val root = parseJson(versionBody)
@@ -9,4 +10,41 @@ fun debuggerUrl(versionBody: String): String? {
         return null
     }
     return url!!.asString()
+}
+
+type WsEndpoint(val host: String, val port: Int, val path: String)
+
+fun parseWsUrl(url: String): WsEndpoint? {
+    if (url.indexOf("ws://") != 0) {
+        return null
+    }
+    val rest = url.substring(5, url.length)
+    val slash = rest.indexOf("/")
+    if (slash < 0) {
+        return null
+    }
+    val hostPort = rest.substring(0, slash)
+    val path = rest.substring(slash, rest.length)
+    val colon = hostPort.indexOf(":")
+    if (colon < 0) {
+        return null
+    }
+    val host = hostPort.substring(0, colon)
+    if (host == "") {
+        return null
+    }
+    var port = 0
+    var i = colon + 1
+    while (i < hostPort.length) {
+        val d = NativeMemory.readByte(hostPort.ptr!!, i) - 48
+        if (d < 0 || d > 9) {
+            return null
+        }
+        port = port * 10 + d
+        i = i + 1
+    }
+    if (port <= 0) {
+        return null
+    }
+    return WsEndpoint(host, port, path)
 }

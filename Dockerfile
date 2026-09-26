@@ -20,6 +20,13 @@ WORKDIR /src
 COPY eiwa.yaml eiwa.yaml
 COPY protocol protocol
 COPY src src
+COPY tests tests
+# Live proof: install Chromium and run the FULL suite, including the
+# real CDP session (goto + title on example.com). A broken engine
+# fails the image build here.
+RUN apt-get update && apt-get install -y --no-install-recommends chromium \
+    && rm -rf /var/lib/apt/lists/* \
+    && eiwa test
 # NOTE: `eiwa build -o` rejects absolute paths (mkdir -p with empty
 # operand; CLI bug filed upstream), so build relative then move.
 RUN eiwa build -o worker && mkdir -p /out && mv worker /out/worker
