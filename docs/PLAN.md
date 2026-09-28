@@ -86,6 +86,8 @@ does not narrow through `||` chains — `!!` after explicit null guards.
 - [x] `healthResponse` builder for k8s probes (§30.1)
 - [ ] Worker accept loop + connection routing (needs `main` binary)
 - [x] Worker accept loop + `main` binary (`serve`/`serveOne`, `src/main.ei`)
+- [ ] Task-per-connection — BLOCKED on compiler TaskBlock collision
+      (importing a task-containing module breaks local task capture)
 - [x] Docker image validated: boots, `/health` per §30.1, WS `initialize`
       round-trip against the container (idle accept no longer exits)
 - [x] worker round-trip with >125-byte frames (was blocked on backend:
