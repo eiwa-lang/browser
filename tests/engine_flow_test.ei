@@ -95,8 +95,21 @@ fun engineFake(port: Int): String {
     return out
 }
 
+fun wsConnectRetry(port: Int, path: String): WsClient? {
+    var tries = 0
+    while (tries < 50) {
+        val ws = wsConnect("127.0.0.1", port, path)
+        if (ws != null) {
+            return ws
+        }
+        sleepMs(100)
+        tries = tries + 1
+    }
+    return null
+}
+
 fun engineClient(port: Int): String {
-    val ws = wsConnect("127.0.0.1", port, "/fake")
+    val ws = wsConnectRetry(port, "/fake")
     if (ws == null) {
         return "no-conn"
     }

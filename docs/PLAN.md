@@ -106,7 +106,8 @@ does not narrow through `||` chains — `!!` after explicit null guards.
       sticky contexts, fail-fast eviction (§§5.2, 30.2)
 - [x] K8s manifests: `Service` stable DNS + resource limits (`k8s/`)
 - [ ] Headless-service DNS discovery (least-loaded) — post-MVP (§30.3)
-- [ ] `examples/scraping-demo/` reference consumer validated (§44)
+- [x] `examples/scraping-demo/` reference consumer validated (§44: all
+      examples compile against real modules via `--module-path`)
 
 ## Out of browser scope (separate scraper repo)
 

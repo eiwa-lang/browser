@@ -158,8 +158,21 @@ fun workerSide(portA: Int, portB: Int): String {
     return out
 }
 
+fun wsConnectRetry(port: Int, path: String): WsClient? {
+    var tries = 0
+    while (tries < 50) {
+        val ws = wsConnect("127.0.0.1", port, path)
+        if (ws != null) {
+            return ws
+        }
+        sleepMs(100)
+        tries = tries + 1
+    }
+    return null
+}
+
 fun clientSide(portB: Int): String {
-    val ws = wsConnect("127.0.0.1", portB, "/")
+    val ws = wsConnectRetry(portB, "/")
     if (ws == null) {
         return "no-conn"
     }
