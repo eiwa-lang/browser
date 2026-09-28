@@ -33,7 +33,9 @@ narrows after an early-return null check (redundant `!!` warns).
 - [x] Minimal HTTP GET + `/json/version` debugger-URL parse (CDP attach)
 - [x] `CdpConn` driver: id correlation, session attach, full flow proven
       against a fake DevTools target (create→attach→navigate→load→title)
-- [ ] Live CDP session against real Chromium (needs Chromium binary/CI)
+- [ ] Live CDP session against real Chromium (in progress; findings so far:
+      DevTools needs HTTP/1.1 + IP/localhost Host + Content-Length reads;
+      `parseWsUrl` fails on the real payload — under diagnosis)
 - [ ] `Browser`/`Context`/`Page` managers, `Chromium Adapter` (§§5.4, 5.5)
 
 `std.process` blocker resolved by `eiwa-lang@d54fc13`
