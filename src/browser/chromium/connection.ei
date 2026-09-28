@@ -85,10 +85,10 @@ fun cdpConn(ws: WsClient): CdpConn {
 
 fun attachDevtools(host: String, port: Int): CdpConn? {
     val res = httpGet(host, port, "/json/version")
-    if (res == null || res!!.status != 200) {
+    if (res == null || res.status != 200) {
         return null
     }
-    val debug = debuggerUrl(res!!.body)
+    val debug = debuggerUrl(res.body)
     if (debug == null) {
         return null
     }

@@ -75,7 +75,7 @@ fun splitServe(server: TCPServer): String {
     val bye = wsRecv(conn)
     conn.close()
     server.close()
-    if (bye == null || bye!!.opcode != 8) {
+    if (bye == null || bye.opcode != 8) {
         return "close-fail"
     }
     return "ok"

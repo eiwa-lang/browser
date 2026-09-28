@@ -90,7 +90,7 @@ type Engine(
         if (binding == null || url == "") {
             return false
         }
-        val session = binding!!.session
+        val session = binding.session
         val enabled = this.conn.call({ callId -> sessionCmd(callId, session, "Page.enable") }, 10000)
         if (enabled == null) {
             return false
@@ -112,7 +112,7 @@ type Engine(
         if (binding == null) {
             return null
         }
-        return this.readScript(binding!!.session, "document.body.innerText")
+        return this.readScript(binding.session, "document.body.innerText")
     }
 
     fun content(page: String): String? {
@@ -125,7 +125,7 @@ type Engine(
         if (binding == null) {
             return null
         }
-        return this.readScript(binding!!.session, "document.documentElement.outerHTML")
+        return this.readScript(binding.session, "document.documentElement.outerHTML")
     }
 
     fun readScript(session: String, script: String): String? {
@@ -150,7 +150,7 @@ type Engine(
         if (binding == null) {
             return false
         }
-        this.conn.call({ callId -> closeTargetCmd(callId, binding!!.target) }, 10000)
+        this.conn.call({ callId -> closeTargetCmd(callId, binding.target) }, 10000)
         return this.pages.drop(page)
     }
 

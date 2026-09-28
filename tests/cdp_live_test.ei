@@ -16,7 +16,7 @@ fun chromiumExe(): String {
     if (exe == null || exe == "") {
         return "chromium"
     }
-    return exe!!
+    return exe
 }
 
 fun sendRecv(ws: WsClient, frame: String, wantId: Int): String? {
@@ -109,8 +109,8 @@ fun cdpLive(): String {
         val probe = probeVersion(9333)
         if (probe == "ok:200") {
             val res = httpGet("127.0.0.1", 9333, "/json/version")
-            if (res != null && res!!.status == 200) {
-                version = res!!.body
+            if (res != null && res.status == 200) {
+                version = res.body
                 tries = 999
             } else {
                 badStatus = badStatus + 1

@@ -60,7 +60,7 @@ fun answerHandshake(sock: Socket, head: String): Bool {
         sock.close()
         return false
     }
-    if (writeAll(sock, handshakeResponse(key!!)) == false) {
+    if (writeAll(sock, handshakeResponse(key)) == false) {
         sock.close()
         return false
     }
