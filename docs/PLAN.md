@@ -35,6 +35,9 @@ narrows after an early-return null check (redundant `!!` warns).
       against a fake DevTools target (create→attach→navigate→load→title)
 - [x] Live CDP session against real Chromium (proven in Docker build:
       `cdp live: ok:Example Domain`, full flow create→attach→load→title)
+- [x] Worker drives live Engine: `serveEngine`, `engineDispatch` routing
+      newContext/newPage/goto/text/content/close (+initialize/version
+      fallback), Mutex-guarded, proven end-to-end against a fake
 - [ ] `Browser`/`Context`/`Page` managers, `Chromium Adapter` (§§5.4, 5.5)
 - [ ] `Browser`/`Context`/`Page` managers, `Chromium Adapter` (§§5.4, 5.5)
 

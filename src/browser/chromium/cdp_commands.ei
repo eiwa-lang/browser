@@ -117,6 +117,18 @@ fun parseTargetCreated(result: JsonValue): String? {
     return target!!.asString()
 }
 
+fun parseBrowserContextCreated(result: JsonValue): String? {
+    val res = result.get("result")
+    if (res == null) {
+        return null
+    }
+    val ctx = res!!.get("browserContextId")
+    if (ctx == null || ctx!!.isString() == false) {
+        return null
+    }
+    return ctx!!.asString()
+}
+
 fun parseNavigateFrame(result: JsonValue): String? {
     val res = result.get("result")
     if (res == null) {

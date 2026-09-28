@@ -65,7 +65,7 @@ type PageManager(
         if (target == "" || session == "") {
             return false
         }
-        this.pages.put(page, PageBinding(current!!.context, target, session))
+        this.pages.put(page, PageBinding(current.context, target, session))
         return true
     }
 

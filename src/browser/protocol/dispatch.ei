@@ -9,7 +9,7 @@ import { parseFrame, isNotification, resultFrame, errorFrame } from ".browser.pr
 fun protocolVersion(): String = "1.0"
 
 fun serverCapabilities(): String {
-    return "[\"browser\", \"context\", \"page\", \"network\", \"downloads\", \"plugins\"]"
+    return ["browser", "context", "page", "network", "downloads", "plugins"].toJson()
 }
 
 fun dispatch(raw: String): String {

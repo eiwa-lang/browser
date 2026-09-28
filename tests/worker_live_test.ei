@@ -1,0 +1,219 @@
+import { assert } from "std.core"
+import { parseJson, Json } from "std.json"
+import { sleepMs } from "std.time"
+import { TCPServer, Socket } from "std.net"
+import { buildFrame, wsRecv, writeAll, WsClient, wsConnect } from ".browser.net.ws"
+import { readHttpRequest, answerHandshake } from ".browser.net.ws_server"
+import { requestFrame } from ".browser.protocol.envelope"
+import { Chromium } from ".browser.chromium.chromium"
+import { cdpConn } from ".browser.chromium.connection"
+import { Engine } from ".browser.engine.engine"
+import { serveOneEngine } from ".browser.worker.server"
+
+fun liveReply(id: Int, result: String): String {
+    return "{\"id\": $id, \"result\": $result}"
+}
+
+fun liveSession(sock: Socket): String {
+    var open = true
+    while (open) {
+        val f = wsRecv(sock)
+        if (f == null) {
+            return "closed"
+        }
+        if (f.opcode == 8) {
+            return "ok"
+        }
+        if (f.opcode == 1) {
+            val msg = parseJson(f.payload)
+            val id = msg.get("id")
+            if (id != null && id!!.isNumber()) {
+                val num = id!!.asNumber().toInt()
+                val method = msg.get("method")
+                if (method != null && method!!.isString()) {
+                    val name = method!!.asString()
+                    if (name == "Target.createBrowserContext") {
+                        writeAll(sock, buildFrame(1, liveReply(num, ["browserContextId" of "CB1"].toJson()), null))
+                    } else if (name == "Target.disposeBrowserContext") {
+                        writeAll(sock, buildFrame(1, liveReply(num, "{}"), null))
+                    } else if (name == "Target.createTarget") {
+                        writeAll(sock, buildFrame(1, liveReply(num, ["targetId" of "T1"].toJson()), null))
+                    } else if (name == "Target.attachToTarget") {
+                        writeAll(sock, buildFrame(1, liveReply(num, ["sessionId" of "S1"].toJson()), null))
+                    } else if (name == "Target.closeTarget") {
+                        writeAll(sock, buildFrame(1, liveReply(num, "{}"), null))
+                    } else if (name == "Page.enable") {
+                        writeAll(sock, buildFrame(1, liveReply(num, "{}"), null))
+                    } else if (name == "Page.navigate") {
+                        writeAll(sock, buildFrame(1, liveReply(num, ["frameId" of "F1"].toJson()), null))
+                        writeAll(sock, buildFrame(1, "{\"method\": \"Page.loadEventFired\", \"params\": {}, \"sessionId\": \"S1\"}", null))
+                    } else if (name == "Runtime.evaluate") {
+                        writeAll(sock, buildFrame(1, liveReply(num, "{\"result\": {\"type\": \"string\", \"value\": \"Live heading\"}}"), null))
+                    } else {
+                        writeAll(sock, buildFrame(1, liveReply(num, "{}"), null))
+                    }
+                }
+            }
+        }
+    }
+    return "closed"
+}
+
+fun liveFakeCdp(port: Int): String {
+    val server = TCPServer()
+    if (server.bind(port) == false) {
+        return "bind-fail"
+    }
+    val conn = server.accept()
+    if (conn == null) {
+        server.close()
+        return "accept-fail"
+    }
+    val head = readHttpRequest(conn)
+    if (head == null) {
+        server.close()
+        return "read-fail"
+    }
+    if (answerHandshake(conn, head) == false) {
+        server.close()
+        return "handshake-fail"
+    }
+    val out = liveSession(conn)
+    conn.close()
+    server.close()
+    return out
+}
+
+fun buildTestEngine(port: Int): Engine? {
+    val ws = wsConnect("127.0.0.1", port, "/fake")
+    if (ws == null) {
+        return null
+    }
+    return Engine(Chromium("fake", 0, -1), cdpConn(ws))
+}
+
+fun rpcField(ws: WsClient, frame: String, key: String): String? {
+    if (ws.sendText(frame) == false) {
+        return null
+    }
+    var tries = 0
+    while (tries < 20) {
+        val got = ws.recv()
+        if (got == null) {
+            return null
+        }
+        val msg = parseJson(got)
+        val res = msg.get("result")
+        if (res != null) {
+            val field = res!!.get(key)
+            if (field != null && field!!.isString()) {
+                return field!!.asString()
+            }
+        }
+        tries = tries + 1
+    }
+    return null
+}
+
+fun rpcOk(ws: WsClient, frame: String): Bool {
+    val got = rpcRaw(ws, frame)
+    if (got == null) {
+        return false
+    }
+    return parseJson(got).get("result") != null
+}
+
+fun rpcRaw(ws: WsClient, frame: String): String? {
+    if (ws.sendText(frame) == false) {
+        return null
+    }
+    var tries = 0
+    while (tries < 20) {
+        val got = ws.recv()
+        if (got == null) {
+            return null
+        }
+        return got
+    }
+    return null
+}
+
+fun workerSide(portA: Int, portB: Int): String {
+    val engine = buildTestEngine(portA)
+    if (engine == null) {
+        return "no-engine"
+    }
+    val server = TCPServer()
+    if (server.bind(portB) == false) {
+        return "bind-fail"
+    }
+    val conn = server.accept()
+    if (conn == null) {
+        server.close()
+        return "accept-fail"
+    }
+    val out = serveOneEngine(conn, engine)
+    engine.conn.close()
+    server.close()
+    return out
+}
+
+fun clientSide(portB: Int): String {
+    val ws = wsConnect("127.0.0.1", portB, "/")
+    if (ws == null) {
+        return "no-conn"
+    }
+    val ctx = rpcField(ws, requestFrame(1, "browser.newContext", "{}"), "context")
+    if (ctx == null) {
+        ws.close()
+        return "no-ctx"
+    }
+    val page = rpcField(ws, "{\"jsonrpc\": \"2.0\", \"id\": 2, \"method\": \"context.newPage\", \"params\": {\"context\": \"$ctx\"}}", "page")
+    if (page == null) {
+        ws.close()
+        return "no-page"
+    }
+    if (rpcOk(ws, "{\"jsonrpc\": \"2.0\", \"id\": 3, \"method\": \"page.goto\", \"params\": {\"page\": \"$page\", \"url\": \"https://example.com\", \"timeoutMs\": 5000}}") == false) {
+        ws.close()
+        return "no-goto"
+    }
+    val text = rpcField(ws, "{\"jsonrpc\": \"2.0\", \"id\": 4, \"method\": \"page.text\", \"params\": {\"page\": \"$page\"}}", "text")
+    if (text == null || text != "Live heading") {
+        ws.close()
+        return "no-text"
+    }
+    if (rpcOk(ws, "{\"jsonrpc\": \"2.0\", \"id\": 5, \"method\": \"page.close\", \"params\": {\"page\": \"$page\"}}") == false) {
+        ws.close()
+        return "no-closepage"
+    }
+    if (rpcOk(ws, "{\"jsonrpc\": \"2.0\", \"id\": 6, \"method\": \"context.close\", \"params\": {\"context\": \"$ctx\"}}") == false) {
+        ws.close()
+        return "no-closectx"
+    }
+    val unknown = rpcRaw(ws, requestFrame(7, "page.fly", "{}"))
+    ws.close()
+    if (unknown == null) {
+        return "no-unknown"
+    }
+    if (parseJson(unknown).get("error") == null) {
+        return "unknown-no-error"
+    }
+    return "ok"
+}
+
+test "worker: engine dispatch over a live connection" {
+    val cdp = task {
+        liveFakeCdp(19896)
+    }
+    sleepMs(150)
+    val worker = task {
+        workerSide(19896, 19897)
+    }
+    sleepMs(150)
+    val client = task {
+        clientSide(19897)
+    }
+    assert(client.await() == "ok")
+    assert(worker.await() == "ws")
+    assert(cdp.await() == "ok")
+}

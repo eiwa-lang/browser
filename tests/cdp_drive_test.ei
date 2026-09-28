@@ -1,5 +1,5 @@
 import { assert } from "std.core"
-import { parseJson } from "std.json"
+import { parseJson, Json } from "std.json"
 import { sleepMs } from "std.time"
 import { TCPServer, Socket } from "std.net"
 import { buildFrame, wsRecv, writeAll } from ".browser.net.ws"
@@ -8,7 +8,7 @@ import { CdpConn, attachDevtools } from ".browser.chromium.connection"
 import { createTargetCmd, attachCmd, navigateCmd, evaluateCmd, parseTargetCreated, parseAttached, evaluateValue, cdpEventMethod } from ".browser.chromium.cdp_commands"
 
 fun fakeCdpVersion(): String {
-    return "{\"webSocketDebuggerUrl\": \"ws://127.0.0.1/fake\"}"
+    return ["webSocketDebuggerUrl" of "ws://127.0.0.1/fake"].toJson()
 }
 
 fun cdpReply(id: Int, result: String): String {
@@ -34,13 +34,13 @@ fun fakeCdpSession(sock: Socket): String {
                 if (method != null && method!!.isString()) {
                     val name = method!!.asString()
                     if (name == "Target.createTarget") {
-                        writeAll(sock, buildFrame(1, cdpReply(num, "{\"targetId\": \"T1\"}"), null))
+                        writeAll(sock, buildFrame(1, cdpReply(num, ["targetId" of "T1"].toJson()), null))
                     } else if (name == "Target.attachToTarget") {
-                        writeAll(sock, buildFrame(1, cdpReply(num, "{\"sessionId\": \"S1\"}"), null))
+                        writeAll(sock, buildFrame(1, cdpReply(num, ["sessionId" of "S1"].toJson()), null))
                     } else if (name == "Page.enable") {
                         writeAll(sock, buildFrame(1, cdpReply(num, "{}"), null))
                     } else if (name == "Page.navigate") {
-                        writeAll(sock, buildFrame(1, cdpReply(num, "{\"frameId\": \"F1\"}"), null))
+                        writeAll(sock, buildFrame(1, cdpReply(num, ["frameId" of "F1"].toJson()), null))
                         writeAll(sock, buildFrame(1, "{\"method\": \"Page.loadEventFired\", \"params\": {}, \"sessionId\": \"S1\"}", null))
                     } else if (name == "Runtime.evaluate") {
                         writeAll(sock, buildFrame(1, cdpReply(num, "{\"result\": {\"type\": \"string\", \"value\": \"Example Domain\"}}"), null))

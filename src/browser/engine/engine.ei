@@ -1,0 +1,171 @@
+// Engine: live browser automation over one DevTools connection (§§5.4, 5.5).
+//
+// Public methods take the lock; inner helpers assume it is held (never
+// nest). Managers own ids, the adapter (CdpConn) owns the wire.
+
+import { Mutex } from "std.thread"
+import { parseJson } from "std.json"
+import { Chromium } from ".browser.chromium.chromium"
+import { CdpConn, awaitEvent } from ".browser.chromium.connection"
+import { ContextManager, PageManager } from ".browser.engine.managers"
+import { createBrowserContextCmd, createTargetCtxCmd, disposeBrowserContextCmd, attachCmd, navigateCmd, evaluateCmd, closeTargetCmd, sessionCmd, parseBrowserContextCreated, parseTargetCreated, parseAttached, evaluateValue, cdpEventMethod, cdpSessionOf } from ".browser.chromium.cdp_commands"
+
+type Engine(
+    val chromium: Chromium,
+    val conn: CdpConn,
+    val contexts: ContextManager = ContextManager(),
+    val pages: PageManager = PageManager(),
+    val lock: Mutex = Mutex()
+) {
+
+    fun newContext(): String? {
+        val out = this.lock.withLock({ this.createContext() })
+        return out
+    }
+
+    fun createContext(): String? {
+        val id = this.contexts.create()
+        val raw = this.conn.call({ callId -> createBrowserContextCmd(callId) }, 10000)
+        if (raw == null) {
+            this.contexts.drop(id)
+            return null
+        }
+        val cdpId = parseBrowserContextCreated(parseJson(raw))
+        if (cdpId == null) {
+            this.contexts.drop(id)
+            return null
+        }
+        if (this.contexts.bind(id, cdpId) == false) {
+            this.contexts.drop(id)
+            return null
+        }
+        return id
+    }
+
+    fun newPage(ctx: String): String? {
+        val out = this.lock.withLock({ this.createPage(ctx) })
+        return out
+    }
+
+    fun createPage(ctx: String): String? {
+        val cdpCtx = this.contexts.cdpId(ctx)
+        if (cdpCtx == null) {
+            return null
+        }
+        val id = this.pages.create(ctx)
+        val created = this.conn.call({ callId -> createTargetCtxCmd(callId, "about:blank", cdpCtx) }, 10000)
+        if (created == null) {
+            this.pages.drop(id)
+            return null
+        }
+        val target = parseTargetCreated(parseJson(created))
+        if (target == null) {
+            this.pages.drop(id)
+            return null
+        }
+        val attached = this.conn.call({ callId -> attachCmd(callId, target) }, 10000)
+        if (attached == null) {
+            this.pages.drop(id)
+            return null
+        }
+        val session = parseAttached(parseJson(attached))
+        if (session == null) {
+            this.pages.drop(id)
+            return null
+        }
+        if (this.pages.bind(id, target, session.session) == false) {
+            this.pages.drop(id)
+            return null
+        }
+        return id
+    }
+
+    fun goto(page: String, url: String, timeoutMs: Int): Bool {
+        val out = this.lock.withLock({ this.navigate(page, url, timeoutMs) })
+        return out
+    }
+
+    fun navigate(page: String, url: String, timeoutMs: Int): Bool {
+        val binding = this.pages.binding(page)
+        if (binding == null || url == "") {
+            return false
+        }
+        val session = binding!!.session
+        val enabled = this.conn.call({ callId -> sessionCmd(callId, session, "Page.enable") }, 10000)
+        if (enabled == null) {
+            return false
+        }
+        val navigated = this.conn.call({ callId -> navigateCmd(callId, session, url) }, 10000)
+        if (navigated == null) {
+            return false
+        }
+        return awaitEvent(this.conn, { raw -> cdpEventMethod(parseJson(raw)) == "Page.loadEventFired" && cdpSessionOf(parseJson(raw)) == session }, timeoutMs)
+    }
+
+    fun text(page: String): String? {
+        val out = this.lock.withLock({ this.readText(page) })
+        return out
+    }
+
+    fun readText(page: String): String? {
+        val binding = this.pages.binding(page)
+        if (binding == null) {
+            return null
+        }
+        return this.readScript(binding!!.session, "document.body.innerText")
+    }
+
+    fun content(page: String): String? {
+        val out = this.lock.withLock({ this.readContent(page) })
+        return out
+    }
+
+    fun readContent(page: String): String? {
+        val binding = this.pages.binding(page)
+        if (binding == null) {
+            return null
+        }
+        return this.readScript(binding!!.session, "document.documentElement.outerHTML")
+    }
+
+    fun readScript(session: String, script: String): String? {
+        val raw = this.conn.call({ callId -> evaluateCmd(callId, session, script) }, 10000)
+        if (raw == null) {
+            return null
+        }
+        val value = evaluateValue(parseJson(raw))
+        if (value == null || value!!.isString() == false) {
+            return null
+        }
+        return value!!.asString()
+    }
+
+    fun closePage(page: String): Bool {
+        val out = this.lock.withLock({ this.dropPage(page) })
+        return out
+    }
+
+    fun dropPage(page: String): Bool {
+        val binding = this.pages.binding(page)
+        if (binding == null) {
+            return false
+        }
+        this.conn.call({ callId -> closeTargetCmd(callId, binding!!.target) }, 10000)
+        return this.pages.drop(page)
+    }
+
+    fun closeContext(ctx: String): Bool {
+        val out = this.lock.withLock({ this.dropContext(ctx) })
+        return out
+    }
+
+    fun dropContext(ctx: String): Bool {
+        val cdpCtx = this.contexts.cdpId(ctx)
+        if (cdpCtx == null) {
+            return false
+        }
+        this.pages.dropByContext(ctx)
+        this.conn.call({ callId -> disposeBrowserContextCmd(callId, cdpCtx) }, 10000)
+        return this.contexts.drop(ctx)
+    }
+}

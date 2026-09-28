@@ -3,6 +3,7 @@
 // Owns the WS client, hands out ids and matches responses by id,
 // skipping interleaved events (same shape as the CDP protocol itself).
 
+import { MutableList } from "std.collections"
 import { parseJson } from "std.json"
 import { nowMillis } from "std.time"
 import { WsClient, wsConnect } from ".browser.net.ws"
@@ -10,7 +11,7 @@ import { FrameReader } from ".browser.net.reader"
 import { httpGet } from ".browser.net.http"
 import { debuggerUrl, parseWsUrl } from ".browser.chromium.cdp"
 
-type CdpConn(val ws: WsClient, val reader: FrameReader, var nextId: Int = 1) {
+type CdpConn(val ws: WsClient, val reader: FrameReader, val events: MutableList<String> = MutableList<String>(), var nextId: Int = 1) {
 
     fun close(): Void {
         this.ws.close()
@@ -42,14 +43,44 @@ type CdpConn(val ws: WsClient, val reader: FrameReader, var nextId: Int = 1) {
                 if (mid != null && mid!!.isNumber() && mid!!.asNumber().toInt() == id) {
                     return f.payload
                 }
+                this.events.add(f.payload)
             }
         }
         return null
     }
 }
 
+fun awaitEvent(conn: CdpConn, want: (String) -> Bool, timeoutMs: Int): Bool {
+    var i = 0
+    while (i < conn.events.size()) {
+        if (want(conn.events.get(i))) {
+            conn.events.remove(i)
+            return true
+        }
+        i = i + 1
+    }
+    val end = nowMillis() + timeoutMs
+    while (nowMillis() < end) {
+        val left = end - nowMillis()
+        if (left <= 0) {
+            return false
+        }
+        val f = if (left < 2000) conn.reader.readFrame(left) else conn.reader.readFrame(2000)
+        if (f == null) {
+            return false
+        }
+        if (f.opcode == 1 || f.opcode == 2) {
+            if (want(f.payload)) {
+                return true
+            }
+            conn.events.add(f.payload)
+        }
+    }
+    return false
+}
+
 fun cdpConn(ws: WsClient): CdpConn {
-    return CdpConn(ws, FrameReader(ws.socket, ""), 1)
+    return CdpConn(ws, FrameReader(ws.socket, ""), MutableList<String>(), 1)
 }
 
 fun attachDevtools(host: String, port: Int): CdpConn? {

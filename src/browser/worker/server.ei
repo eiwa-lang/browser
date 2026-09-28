@@ -1,15 +1,19 @@
 // Worker accept loop: one TCP port serves WS + /health (§§30, 54).
 //
-// Sequential per connection in MVP (task-per-connection is the
-// production follow-up). Engine state (browser/context counts) wires in
-// with the Chromium Adapter; currently reported as zero.
+// One task per connection; engine state serializes on its Mutex.
+// `serve` answers stubs (initialize/version); `serveEngine` drives a
+// live Chromium through the Engine.
 
 import { Socket, TCPServer } from "std.net"
-import { MutableList } from "std.collections"
+import { MutableList, MutableMap } from "std.collections"
 import { StackTask } from "std.coroutines"
+import { JsonValue, jsonObject, jsonString } from "std.json"
 import { wsRecv, buildFrame, writeAll } from ".browser.net.ws"
 import { readHttpRequest, answerHandshake } from ".browser.net.ws_server"
+import { parseFrame, isNotification, resultFrame, errorFrame } from ".browser.protocol.envelope"
+import { BrowserError } from ".browser.protocol.errors"
 import { dispatch, healthResponse } from ".browser.protocol.dispatch"
+import { Engine } from ".browser.engine.engine"
 
 fun routeOf(head: String): String {
     if (head.indexOf("Upgrade: websocket") >= 0) {
@@ -22,6 +26,10 @@ fun routeOf(head: String): String {
 }
 
 fun serveFrames(sock: Socket): Void {
+    serveFramesWith(sock, { raw -> dispatch(raw) })
+}
+
+fun serveFramesWith(sock: Socket, route: (String) -> String): Void {
     var open = true
     while (open) {
         val f = wsRecv(sock)
@@ -33,7 +41,7 @@ fun serveFrames(sock: Socket): Void {
         } else if (f.opcode == 9) {
             writeAll(sock, buildFrame(10, f.payload, null))
         } else if (f.opcode == 1 || f.opcode == 2) {
-            val reply = dispatch(f.payload)
+            val reply = route(f.payload)
             if (reply != "") {
                 writeAll(sock, buildFrame(1, reply, null))
             }
@@ -66,6 +74,14 @@ fun serveOne(sock: Socket, browsers: Int, contexts: Int): String {
 }
 
 fun serve(port: Int, maxConn: Int): Int {
+    return serveLoop(port, maxConn, { sock -> serveOne(sock, 0, 0) })
+}
+
+fun serveEngine(port: Int, engine: Engine, maxConn: Int): Int {
+    return serveLoop(port, maxConn, { sock -> serveOneEngine(sock, engine) })
+}
+
+fun serveLoop(port: Int, maxConn: Int, handle: (Socket) -> String): Int {
     val server = TCPServer()
     if (server.bind(port) == false) {
         return -1
@@ -74,8 +90,6 @@ fun serve(port: Int, maxConn: Int): Int {
     var served = 0
     var idle = 0
     var stop = false
-    // One task per connection; shared engine state must go behind a
-    // Mutex once browsers/contexts stop being hardcoded below.
     while ((maxConn < 0 || served < maxConn) && stop == false) {
         val conn = server.accept()
         if (conn == null) {
@@ -86,7 +100,7 @@ fun serve(port: Int, maxConn: Int): Int {
         } else {
             idle = 0
             val job = task {
-                serveOne(conn, 0, 0)
+                handle(conn)
             }
             jobs.add(job)
             served = served + 1
@@ -99,4 +113,104 @@ fun serve(port: Int, maxConn: Int): Int {
         i = i + 1
     }
     return served
+}
+
+fun strResult(id: JsonValue, key: String, value: String): String {
+    val m = MutableMap<String, JsonValue>()
+    m.put(key, jsonString(value))
+    return resultFrame(id, jsonObject(m.freeze()).write())
+}
+
+fun okResult(id: JsonValue): String {
+    return resultFrame(id, "{\"ok\": true}")
+}
+
+fun engineFailed(id: JsonValue, message: String): String {
+    return errorFrame(id, BrowserError("ENGINE", message, false))
+}
+
+fun effTimeout(v: Int): Int {
+    if (v <= 0) {
+        return 30000
+    }
+    return v
+}
+
+fun engineDispatch(engine: Engine, raw: String): String {
+    if (isNotification(raw)) {
+        return ""
+    }
+    val rpc = parseFrame(raw)
+    if (rpc.method == "browser.newContext") {
+        val ctx = engine.newContext()
+        if (ctx == null) {
+            return engineFailed(rpc.id, "no worker available")
+        }
+        return strResult(rpc.id, "context", ctx)
+    }
+    if (rpc.method == "context.newPage") {
+        val page = engine.newPage(rpc.argumentString("context"))
+        if (page == null) {
+            return engineFailed(rpc.id, "unknown context")
+        }
+        return strResult(rpc.id, "page", page)
+    }
+    if (rpc.method == "page.goto") {
+        if (engine.goto(rpc.argumentString("page"), rpc.argumentString("url"), effTimeout(rpc.argumentInt("timeoutMs")))) {
+            return okResult(rpc.id)
+        }
+        return engineFailed(rpc.id, "navigation failed")
+    }
+    if (rpc.method == "page.text") {
+        val text = engine.text(rpc.argumentString("page"))
+        if (text == null) {
+            return engineFailed(rpc.id, "unknown page")
+        }
+        return strResult(rpc.id, "text", text)
+    }
+    if (rpc.method == "page.content") {
+        val html = engine.content(rpc.argumentString("page"))
+        if (html == null) {
+            return engineFailed(rpc.id, "unknown page")
+        }
+        return strResult(rpc.id, "html", html)
+    }
+    if (rpc.method == "page.close") {
+        if (engine.closePage(rpc.argumentString("page"))) {
+            return okResult(rpc.id)
+        }
+        return engineFailed(rpc.id, "unknown page")
+    }
+    if (rpc.method == "context.close") {
+        if (engine.closeContext(rpc.argumentString("context"))) {
+            return okResult(rpc.id)
+        }
+        return engineFailed(rpc.id, "unknown context")
+    }
+    return dispatch(raw)
+}
+
+fun serveOneEngine(sock: Socket, engine: Engine): String {
+    val head = readHttpRequest(sock)
+    if (head == null) {
+        sock.close()
+        return "bad"
+    }
+    val route = routeOf(head)
+    if (route == "health") {
+        val contexts = engine.lock.withLock({ engine.contexts.count() })
+        val pages = engine.lock.withLock({ engine.pages.count() })
+        writeAll(sock, healthResponse(contexts, pages))
+        sock.close()
+        return "health"
+    }
+    if (route == "ws") {
+        if (answerHandshake(sock, head) == false) {
+            return "bad"
+        }
+        serveFramesWith(sock, { raw -> engineDispatch(engine, raw) })
+        return "ws"
+    }
+    sock.close()
+    return "bad"
 }
