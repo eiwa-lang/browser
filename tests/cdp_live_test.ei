@@ -179,7 +179,7 @@ fun cdpLive(): String {
     var titleText = ""
     var tries = 0
     while (tries < 10 && titleText == "") {
-        val evaluated = sendRecv(ws, evaluateCmd(5, session.session, "() => document.title")!!, 5)
+        val evaluated = sendRecv(ws, evaluateCmd(5, session.session, "document.title")!!, 5)
         if (evaluated == null) {
             ws.close()
             c.stop()
