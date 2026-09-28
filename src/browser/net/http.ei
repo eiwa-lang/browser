@@ -62,7 +62,7 @@ fun httpGet(host: String, port: Int, path: String): HttpMini? {
     if (sock == null) {
         return null
     }
-    var req = "GET $path HTTP/1.0\r\n"
+    var req = "GET $path HTTP/1.1\r\n"
     req = req + "Host: $host\r\n"
     req = req + "Connection: close\r\n"
     req = req + "\r\n"
