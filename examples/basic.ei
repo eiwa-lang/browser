@@ -1,0 +1,21 @@
+// Basic usage: connect, handles, command frames, lifecycle.
+import { connect } from ".browser.browser"
+import { css } from ".browser.locator.locator"
+import { gotoCmd, textCmd } from ".browser.protocol.commands"
+
+fun main() {
+    val browser = connect(["ws://browser-worker:8080"], 8)
+    val ctx = browser.newContext()
+    if (ctx == null) {
+        return
+    }
+    val page = browser.newPage(ctx)
+    if (page == null) {
+        browser.closeContext(ctx)
+        return
+    }
+    val goto = gotoCmd(1, page, "https://example.com", "load", 30000)
+    val text = textCmd(2, page, css("h1"))
+    browser.closeContext(ctx)
+    browser.close()
+}

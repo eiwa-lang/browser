@@ -1,0 +1,34 @@
+// Reference scraping service (generic consumer, outside browser scope).
+// HTTP-first fallback + pool via Browser.connect + normalization in-app.
+import { connect } from ".browser.browser"
+import { css } from ".browser.locator.locator"
+import { gotoCmd, textCmd } from ".browser.protocol.commands"
+import { httpGet } from ".browser.net.http"
+
+// App-owned: raw text in, normalized record out.
+fun normalize(raw: String): String {
+    return raw
+}
+
+fun main() {
+    val http = httpGet("shop.example.com", 80, "/api/products/sku-1")
+    if (http != null && http.status == 200) {
+        normalize(http.body)
+        return
+    }
+    val browser = connect(["ws://browser-worker:8080"], 8)
+    val ctx = browser.newContext()
+    if (ctx == null) {
+        return
+    }
+    val page = browser.newPage(ctx)
+    if (page == null) {
+        browser.closeContext(ctx)
+        return
+    }
+    val goto = gotoCmd(1, page, "https://shop.example.com", "load", 30000)
+    val text = textCmd(2, page, css(".product-detail"))
+    normalize("")
+    browser.closeContext(ctx)
+    browser.close()
+}

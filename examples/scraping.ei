@@ -1,0 +1,25 @@
+// Scraping: locators, timeout scopes, waits, evaluation frames.
+import { connect } from ".browser.browser"
+import { parseLocator } from ".browser.locator.locator"
+import { TimeoutConfig, resolveTimeout } from ".browser.timeouts"
+import { waitForCmd, evaluateCmd } from ".browser.protocol.commands"
+
+fun main() {
+    val browser = connect(["ws://browser-worker:8080"], 8)
+    val ctx = browser.newContext()
+    if (ctx == null) {
+        return
+    }
+    val page = browser.newPage(ctx)
+    if (page == null) {
+        browser.closeContext(ctx)
+        return
+    }
+    val loc = parseLocator(".product-detail")
+    val timeouts = TimeoutConfig()
+    timeouts.set("actionTimeout", 5000)
+    val wait = waitForCmd(1, page, loc.selector, resolveTimeout("actionTimeout", [timeouts]))
+    val title = evaluateCmd(2, page, "document.title")
+    browser.closeContext(ctx)
+    browser.close()
+}

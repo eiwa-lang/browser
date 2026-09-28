@@ -1,0 +1,15 @@
+// Network observation: observe-only plugin registration (MVP).
+import { PluginRegistry, networkLoggerTopics } from ".browser.plugins.plugins"
+import { connect } from ".browser.browser"
+
+fun main() {
+    val plugins = PluginRegistry()
+    plugins.use("NetworkLogger", networkLoggerTopics())
+    val browser = connect(["ws://browser-worker:8080"], 8)
+    val ctx = browser.newContext()
+    if (ctx == null) {
+        return
+    }
+    browser.closeContext(ctx)
+    browser.close()
+}
