@@ -106,7 +106,7 @@ fun driveTitle(port: Int): String {
 }
 
 fun driveInner(conn: CdpConn): String {
-    val created = conn.call({ id -> createTargetCmd(id, "https://example.com") })
+    val created = conn.call({ id -> createTargetCmd(id, "https://example.com") }, 10000)
     if (created == null) {
         return "no-create"
     }
@@ -114,7 +114,7 @@ fun driveInner(conn: CdpConn): String {
     if (target == null) {
         return "no-target"
     }
-    val attached = conn.call({ id -> attachCmd(id, target) })
+    val attached = conn.call({ id -> attachCmd(id, target) }, 10000)
     if (attached == null) {
         return "no-attach"
     }
@@ -122,27 +122,29 @@ fun driveInner(conn: CdpConn): String {
     if (session == null) {
         return "no-session"
     }
-    val navigated = conn.call({ id -> navigateCmd(id, session.session, "https://example.com") })
+    val navigated = conn.call({ id -> navigateCmd(id, session.session, "https://example.com") }, 10000)
     if (navigated == null) {
         return "no-navigate"
     }
     var tries = 0
     var loaded = false
     while (tries < 20 && loaded == false) {
-        val got = conn.ws.recv()
-        if (got == null) {
+        val f = conn.reader.readFrame(5000)
+        if (f == null) {
             return "no-events"
         }
-        val msg = parseJson(got)
-        if (cdpEventMethod(msg) == "Page.loadEventFired") {
-            loaded = true
+        if (f.opcode == 1 || f.opcode == 2) {
+            val msg = parseJson(f.payload)
+            if (cdpEventMethod(msg) == "Page.loadEventFired") {
+                loaded = true
+            }
         }
         tries = tries + 1
     }
     if (loaded == false) {
         return "no-load"
     }
-    val evaluated = conn.call({ id -> evaluateCmd(id, session.session, "() => document.title") })
+    val evaluated = conn.call({ id -> evaluateCmd(id, session.session, "() => document.title") }, 10000)
     if (evaluated == null) {
         return "no-evaluate"
     }

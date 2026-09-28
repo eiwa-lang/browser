@@ -257,12 +257,14 @@ fun validHandshake(res: String, key: String): Bool {
 }
 
 fun readHandshake(sock: Socket, key: String): Bool {
+    // Byte-precise: bulk reads would swallow frame bytes pipelined
+    // right behind the 101 response (same-segment coalescing).
     var res = ""
     while (res.indexOf("\r\n\r\n") < 0) {
         if (res.length > 8192) {
             return false
         }
-        val chunk = sock.read(1024)
+        val chunk = sock.read(1)
         if (chunk == "") {
             return false
         }

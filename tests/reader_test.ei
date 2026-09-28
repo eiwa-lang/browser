@@ -1,0 +1,147 @@
+import { assert } from "std.core"
+import { NativeMemory } from "std.core"
+import { Socket, SocketClient, TCPServer } from "std.net"
+import { sleepMs } from "std.time"
+import { nowMillis } from "std.time"
+import { buildFrame, wsRecv, writeAll, randomMask, wsConnect } from ".browser.net.ws"
+import { readHttpRequest, answerHandshake } from ".browser.net.ws_server"
+import { FrameReader } from ".browser.net.reader"
+
+fun sockConnect(port: Int): Socket? {
+    var tries = 0
+    while (tries < 50) {
+        val ws = wsConnect("127.0.0.1", port, "/chat")
+        if (ws != null) {
+            return ws.socket
+        }
+        sleepMs(100)
+        tries = tries + 1
+    }
+    return null
+}
+
+test "reader: preloaded buffer parses without IO" {
+    val port = 19894
+    val server = task {
+        fakeSilentServer(port)
+    }
+    sleepMs(150)
+    val sock = sockConnect(port)
+    assert(sock != null, "connect")
+    val s = sock!!
+    val preload = buildFrame(1, "hi", null) + buildFrame(1, "bye", null)
+    val reader = FrameReader(s, preload)
+    val a = reader.readFrame(5000)
+    assert(a != null, "frame a")
+    assert(a!!.payload == "hi", "payload a")
+    val b = reader.readFrame(5000)
+    assert(b != null, "frame b")
+    assert(b!!.payload == "bye", "payload b")
+    s.close()
+}
+
+fun splitServe(server: TCPServer): String {
+    val conn = server.accept()
+    if (conn == null) {
+        server.close()
+        return "accept-fail"
+    }
+    val head = readHttpRequest(conn)
+    if (head == null) {
+        server.close()
+        return "read-fail"
+    }
+    if (answerHandshake(conn, head) == false) {
+        server.close()
+        return "handshake-fail"
+    }
+    val first = buildFrame(1, "first", null)
+    if (writeAll(conn, first.substring(0, 3)) == false) {
+        conn.close()
+        server.close()
+        return "write-fail"
+    }
+    sleepMs(300)
+    if (writeAll(conn, first.substring(3, first.length)) == false) {
+        conn.close()
+        server.close()
+        return "write-fail"
+    }
+    if (writeAll(conn, buildFrame(1, "second-payload", null)) == false) {
+        conn.close()
+        server.close()
+        return "write-fail"
+    }
+    val bye = wsRecv(conn)
+    conn.close()
+    server.close()
+    if (bye == null || bye!!.opcode != 8) {
+        return "close-fail"
+    }
+    return "ok"
+}
+
+fun fakeSilentServer(port: Int): String {
+    val server = TCPServer()
+    if (server.bind(port) == false) {
+        return "bind-fail"
+    }
+    val conn = server.accept()
+    if (conn == null) {
+        server.close()
+        return "accept-fail"
+    }
+    val head = readHttpRequest(conn)
+    if (head == null) {
+        server.close()
+        return "read-fail"
+    }
+    if (answerHandshake(conn, head) == false) {
+        server.close()
+        return "handshake-fail"
+    }
+    sleepMs(3000)
+    conn.close()
+    server.close()
+    return "ok"
+}
+
+test "reader: split frames reassemble across reads" {
+    val port = 19892
+    val server = TCPServer()
+    assert(server.bind(port), "bind")
+    val serving = task {
+        splitServe(server)
+    }
+    val sock = sockConnect(port)
+    assert(sock != null, "connect")
+    val s = sock!!
+    val reader = FrameReader(s, "")
+    val a = reader.readFrame(5000)
+    assert(a != null, "frame a")
+    assert(a!!.payload == "first", "payload a")
+    val b = reader.readFrame(5000)
+    assert(b != null, "frame b")
+    assert(b!!.payload == "second-payload", "payload b")
+    writeAll(s, buildFrame(8, "", randomMask()))
+    s.close()
+    assert(serving.await() == "ok", "server ok")
+}
+
+test "reader: deadline expires on silence" {
+    val port = 19893
+    val server = task {
+        fakeSilentServer(port)
+    }
+    sleepMs(150)
+    val sock = sockConnect(port)
+    assert(sock != null, "connect")
+    val s = sock!!
+    val reader = FrameReader(s, "")
+    val t0 = nowMillis()
+    val got = reader.readFrame(800)
+    assert(got == null, "deadline null")
+    assert(nowMillis() - t0 >= 700, "deadline time")
+    s.close()
+    assert(server.await() == "ok", "server ok")
+}

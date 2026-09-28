@@ -4,17 +4,19 @@
 // skipping interleaved events (same shape as the CDP protocol itself).
 
 import { parseJson } from "std.json"
+import { nowMillis } from "std.time"
 import { WsClient, wsConnect } from ".browser.net.ws"
+import { FrameReader } from ".browser.net.reader"
 import { httpGet } from ".browser.net.http"
 import { debuggerUrl, parseWsUrl } from ".browser.chromium.cdp"
 
-type CdpConn(val ws: WsClient, var nextId: Int = 1) {
+type CdpConn(val ws: WsClient, val reader: FrameReader, var nextId: Int = 1) {
 
     fun close(): Void {
         this.ws.close()
     }
 
-    fun call(build: (Int) -> String?): String? {
+    fun call(build: (Int) -> String?, timeoutMs: Int): String? {
         val id = this.nextId
         this.nextId = this.nextId + 1
         val frame = build(id)
@@ -24,21 +26,30 @@ type CdpConn(val ws: WsClient, var nextId: Int = 1) {
         if (this.ws.sendText(frame) == false) {
             return null
         }
-        var tries = 0
-        while (tries < 60) {
-            val got = this.ws.recv()
-            if (got == null) {
+        val end = nowMillis() + timeoutMs
+        while (nowMillis() < end) {
+            val left = end - nowMillis()
+            if (left <= 0) {
                 return null
             }
-            val msg = parseJson(got)
-            val mid = msg.get("id")
-            if (mid != null && mid!!.isNumber() && mid!!.asNumber().toInt() == id) {
-                return got
+            val f = if (left < 2000) this.reader.readFrame(left) else this.reader.readFrame(2000)
+            if (f == null) {
+                return null
             }
-            tries = tries + 1
+            if (f.opcode == 1 || f.opcode == 2) {
+                val msg = parseJson(f.payload)
+                val mid = msg.get("id")
+                if (mid != null && mid!!.isNumber() && mid!!.asNumber().toInt() == id) {
+                    return f.payload
+                }
+            }
         }
         return null
     }
+}
+
+fun cdpConn(ws: WsClient): CdpConn {
+    return CdpConn(ws, FrameReader(ws.socket, ""), 1)
 }
 
 fun attachDevtools(host: String, port: Int): CdpConn? {
@@ -58,5 +69,5 @@ fun attachDevtools(host: String, port: Int): CdpConn? {
     if (ws == null) {
         return null
     }
-    return CdpConn(ws)
+    return cdpConn(ws)
 }
