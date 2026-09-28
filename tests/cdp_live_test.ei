@@ -136,7 +136,7 @@ fun cdpLive(): String {
         c.stop()
         return "fail:debugurl"
     }
-    val ep = parseWsUrl(debug)
+    val ep = parseWsUrl(debug, 9333)
     if (ep == null) {
         c.stop()
         return "fail:endpoint"

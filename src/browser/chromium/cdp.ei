@@ -14,11 +14,17 @@ fun debuggerUrl(versionBody: String): String? {
 
 type WsEndpoint(val host: String, val port: Int, val path: String)
 
-fun parseWsUrl(url: String): WsEndpoint? {
-    if (url.indexOf("ws://") != 0) {
+// Real Chromium 154 omits the port (ws://127.0.0.1/devtools/...), so the
+// caller passes the HTTP endpoint port as fallback. wss defaults to 443.
+fun parseWsUrl(url: String, defaultPort: Int): WsEndpoint? {
+    var rest = ""
+    if (url.indexOf("ws://") == 0) {
+        rest = url.substring(5, url.length)
+    } else if (url.indexOf("wss://") == 0) {
+        rest = url.substring(6, url.length)
+    } else {
         return null
     }
-    val rest = url.substring(5, url.length)
     val slash = rest.indexOf("/")
     if (slash < 0) {
         return null
@@ -26,24 +32,27 @@ fun parseWsUrl(url: String): WsEndpoint? {
     val hostPort = rest.substring(0, slash)
     val path = rest.substring(slash, rest.length)
     val colon = hostPort.indexOf(":")
-    if (colon < 0) {
-        return null
-    }
-    val host = hostPort.substring(0, colon)
-    if (host == "") {
-        return null
-    }
-    var port = 0
-    var i = colon + 1
-    while (i < hostPort.length) {
-        val d = NativeMemory.readByte(hostPort.ptr!!, i) - 48
-        if (d < 0 || d > 9) {
+    var host = hostPort
+    var port = defaultPort
+    if (colon >= 0) {
+        host = hostPort.substring(0, colon)
+        port = 0
+        var i = colon + 1
+        var digits = 0
+        while (i < hostPort.length) {
+            val d = NativeMemory.readByte(hostPort.ptr!!, i) - 48
+            if (d < 0 || d > 9) {
+                return null
+            }
+            port = port * 10 + d
+            digits = digits + 1
+            i = i + 1
+        }
+        if (digits == 0 || port <= 0) {
             return null
         }
-        port = port * 10 + d
-        i = i + 1
     }
-    if (port <= 0) {
+    if (host == "") {
         return null
     }
     return WsEndpoint(host, port, path)

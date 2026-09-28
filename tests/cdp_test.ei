@@ -1,6 +1,20 @@
 import { assert } from "std.core"
 import { parseJson } from "std.json"
 import { cdpRequest, cdpRequestSession, createTargetCmd, attachCmd, navigateCmd, evaluateCmd, closeTargetCmd, parseAttached, parseTargetCreated, parseNavigateFrame, evaluateValue, cdpEventMethod, cdpSessionOf } from ".browser.chromium.cdp_commands"
+import { parseWsUrl } from ".browser.chromium.cdp"
+
+test "cdp: endpoint parsing covers real Chromium shapes" {
+    val noPort = parseWsUrl("ws://127.0.0.1/devtools/browser/abc", 9333)!!
+    assert(noPort.host == "127.0.0.1")
+    assert(noPort.port == 9333)
+    assert(noPort.path == "/devtools/browser/abc")
+    val withPort = parseWsUrl("ws://127.0.0.1:9333/devtools/browser/abc", 80)!!
+    assert(withPort.port == 9333)
+    assert(parseWsUrl("http://127.0.0.1:9333/x", 80) == null)
+    assert(parseWsUrl("ws://127.0.0.1:/x", 80) == null)
+    assert(parseWsUrl("ws:///x", 80) == null)
+    assert(parseWsUrl("ws://127.0.0.1", 80) == null)
+}
 
 test "cdp: target lifecycle commands" {
     val create = parseJson(createTargetCmd(1, "https://example.com")!!)

@@ -7,8 +7,8 @@ import { readHttpRequest, answerHandshake } from ".browser.net.ws_server"
 import { CdpConn, attachDevtools } from ".browser.chromium.connection"
 import { createTargetCmd, attachCmd, navigateCmd, evaluateCmd, parseTargetCreated, parseAttached, evaluateValue, cdpEventMethod } from ".browser.chromium.cdp_commands"
 
-fun fakeCdpVersion(port: Int): String {
-    return "{\"webSocketDebuggerUrl\": \"ws://127.0.0.1:$port/fake\"}"
+fun fakeCdpVersion(): String {
+    return "{\"webSocketDebuggerUrl\": \"ws://127.0.0.1/fake\"}"
 }
 
 fun cdpReply(id: Int, result: String): String {
@@ -76,7 +76,7 @@ fun fakeCdpServer(port: Int): String {
             res = res + "Content-Type: application/json\r\n"
             res = res + "Connection: close\r\n"
             res = res + "\r\n"
-            res = res + fakeCdpVersion(port)
+            res = res + fakeCdpVersion()
             writeAll(conn, res)
             conn.close()
         } else {

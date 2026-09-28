@@ -61,7 +61,7 @@ fun attachDevtools(host: String, port: Int): CdpConn? {
     if (debug == null) {
         return null
     }
-    val ep = parseWsUrl(debug)
+    val ep = parseWsUrl(debug, port)
     if (ep == null) {
         return null
     }
