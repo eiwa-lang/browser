@@ -1,0 +1,51 @@
+import { assert } from "std.core"
+import { parseJson } from "std.json"
+import { ContextManager, PageManager } from ".browser.engine.managers"
+import { createBrowserContextCmd, createTargetCtxCmd, disposeBrowserContextCmd } from ".browser.chromium.cdp_commands"
+import { parseFrame } from ".browser.protocol.envelope"
+
+test "managers: context two-phase bind" {
+    val contexts = ContextManager()
+    val c1 = contexts.create()
+    val c2 = contexts.create()
+    assert(c1 == "ctx-1")
+    assert(contexts.cdpId(c1) == null)
+    assert(contexts.bind(c1, "CDP-CTX-1"))
+    assert(contexts.cdpId(c1) == "CDP-CTX-1")
+    assert(contexts.bind("ctx-9", "X") == false)
+    assert(contexts.bind(c2, "") == false)
+    assert(contexts.count() == 2)
+    assert(contexts.drop(c1))
+    assert(contexts.drop(c1) == false)
+    assert(contexts.count() == 1)
+}
+
+test "managers: pages bind and cascade by context" {
+    val pages = PageManager()
+    val p1 = pages.create("ctx-1")
+    val p2 = pages.create("ctx-1")
+    val p3 = pages.create("ctx-2")
+    assert(p1 == "page-1")
+    assert(pages.binding(p1)!!.target == "")
+    assert(pages.bind(p1, "T1", "S1"))
+    assert(pages.binding(p1)!!.session == "S1")
+    assert(pages.bind("page-9", "T", "S") == false)
+    assert(pages.bind(p2, "", "S") == false)
+    assert(pages.dropByContext("ctx-1") == 2)
+    assert(pages.binding(p1) == null)
+    assert(pages.binding(p3)!!.context == "ctx-2")
+    assert(pages.count() == 1)
+    assert(pages.drop(p3))
+}
+
+test "managers: browser-context commands" {
+    val create = parseJson(createBrowserContextCmd(1))
+    assert(create.get("method")!!.asString() == "Target.createBrowserContext")
+    val target = parseJson(createTargetCtxCmd(2, "https://example.com", "CDP-CTX-1")!!)
+    assert(target.get("params")!!.get("browserContextId")!!.asString() == "CDP-CTX-1")
+    assert(createTargetCtxCmd(2, "", "CDP-CTX-1") == null)
+    assert(createTargetCtxCmd(2, "https://example.com", "") == null)
+    val dispose = parseJson(disposeBrowserContextCmd(3, "CDP-CTX-1")!!)
+    assert(dispose.get("method")!!.asString() == "Target.disposeBrowserContext")
+    assert(disposeBrowserContextCmd(3, "") == null)
+}

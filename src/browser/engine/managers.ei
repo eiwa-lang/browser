@@ -1,0 +1,98 @@
+// Manager state machines (§5.4): pure id maps, no IO.
+//
+// The Chromium Adapter performs CDP calls and binds results here;
+// two-phase (create local id, bind remote id) keeps adapter failure
+// explicit. External synchronization (Mutex) belongs to the worker.
+
+import { MutableList, MutableMap } from "std.collections"
+
+type ContextManager(
+    val contexts: MutableMap<String, String> = MutableMap<String, String>(),
+    var next: Int = 1
+) {
+
+    fun create(): String {
+        val id = "ctx-${this.next}"
+        this.next = this.next + 1
+        this.contexts.put(id, "")
+        return id
+    }
+
+    fun bind(ctx: String, cdpId: String): Bool {
+        if (this.contexts.contains(ctx) == false || cdpId == "") {
+            return false
+        }
+        this.contexts.put(ctx, cdpId)
+        return true
+    }
+
+    fun cdpId(ctx: String): String? {
+        val v = this.contexts.get(ctx)
+        if (v == null || v == "") {
+            return null
+        }
+        return v
+    }
+
+    fun drop(ctx: String): Bool {
+        return this.contexts.remove(ctx) != null
+    }
+
+    fun count(): Int {
+        return this.contexts.size()
+    }
+}
+
+type PageBinding(val context: String, val target: String, val session: String)
+
+type PageManager(
+    val pages: MutableMap<String, PageBinding> = MutableMap<String, PageBinding>(),
+    var next: Int = 1
+) {
+
+    fun create(ctx: String): String {
+        val id = "page-${this.next}"
+        this.next = this.next + 1
+        this.pages.put(id, PageBinding(ctx, "", ""))
+        return id
+    }
+
+    fun bind(page: String, target: String, session: String): Bool {
+        val current = this.pages.get(page)
+        if (current == null) {
+            return false
+        }
+        if (target == "" || session == "") {
+            return false
+        }
+        this.pages.put(page, PageBinding(current!!.context, target, session))
+        return true
+    }
+
+    fun binding(page: String): PageBinding? {
+        return this.pages.get(page)
+    }
+
+    fun drop(page: String): Bool {
+        return this.pages.remove(page) != null
+    }
+
+    fun dropByContext(ctx: String): Int {
+        val doomed: MutableList<String> = MutableList<String>()
+        for (this.pages) { entry ->
+            if (entry.value.context == ctx) {
+                doomed.add(entry.key)
+            }
+        }
+        var i = 0
+        while (i < doomed.size()) {
+            this.pages.remove(doomed.get(i))
+            i = i + 1
+        }
+        return doomed.size()
+    }
+
+    fun count(): Int {
+        return this.pages.size()
+    }
+}

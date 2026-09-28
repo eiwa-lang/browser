@@ -61,6 +61,29 @@ fun closeTargetCmd(id: Int, target: String): String? {
     return cdpRequest(id, "Target.closeTarget", jsonObject(params.freeze()).write())
 }
 
+fun createBrowserContextCmd(id: Int): String {
+    return cdpRequest(id, "Target.createBrowserContext", "{}")
+}
+
+fun createTargetCtxCmd(id: Int, url: String, ctx: String): String? {
+    if (url == "" || ctx == "") {
+        return null
+    }
+    val params = MutableMap<String, JsonValue>()
+    params.put("url", jsonString(url))
+    params.put("browserContextId", jsonString(ctx))
+    return cdpRequest(id, "Target.createTarget", jsonObject(params.freeze()).write())
+}
+
+fun disposeBrowserContextCmd(id: Int, ctx: String): String? {
+    if (ctx == "") {
+        return null
+    }
+    val params = MutableMap<String, JsonValue>()
+    params.put("browserContextId", jsonString(ctx))
+    return cdpRequest(id, "Target.disposeBrowserContext", jsonObject(params.freeze()).write())
+}
+
 fun sessionCmd(id: Int, session: String, method: String): String? {
     if (session == "" || method == "") {
         return null
