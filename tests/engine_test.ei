@@ -2,7 +2,7 @@ import { assert } from "std.core"
 import { TCPServer } from "std.net"
 import { sleepMs } from "std.time"
 import { chromiumArgs, launchChromium, Chromium } from ".browser.chromium.chromium"
-import { parseStatus, httpGet } from ".browser.net.http"
+import { parseStatus, parseContentLength, httpGet } from ".browser.net.http"
 import { debuggerUrl } from ".browser.chromium.cdp"
 
 test "engine: chromium launch validates input" {
@@ -27,6 +27,14 @@ test "engine: status line parses the code" {
     assert(parseStatus("HTTP/1.0 404 Not Found") == 404)
     assert(parseStatus("garbage") == -1)
     assert(parseStatus("HTTP/1.1 99x OK") == -1)
+}
+
+test "engine: content length parses case-insensitively" {
+    assert(parseContentLength("HTTP/1.1 200 OK\r\nContent-Length: 42") == 42)
+    assert(parseContentLength("HTTP/1.1 200 OK\r\ncontent-length: 7") == 7)
+    assert(parseContentLength("HTTP/1.1 200 OK\r\nContent-Type: text/plain") == -1)
+    assert(parseContentLength("HTTP/1.1 200 OK\r\nContent-Length: abc") == -1)
+    assert(parseContentLength("HTTP/1.1 200 OK") == -1)
 }
 
 fun fakeVersionServer(port: Int, body: String): String {
