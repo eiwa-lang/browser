@@ -17,16 +17,16 @@ ARG EIWA_VERSION=latest
 
 FROM eiwac/eiwa:${EIWA_VERSION} AS builder
 WORKDIR /src
+# System deps first: this layer only rebuilds when the Dockerfile changes.
+RUN apt-get update && apt-get install -y --no-install-recommends chromium \
+    && rm -rf /var/lib/apt/lists/*
 COPY eiwa.yaml eiwa.yaml
 COPY protocol protocol
 COPY src src
 COPY tests tests
-# Live proof: install Chromium and run the FULL suite, including the
-# real CDP session (goto + title on example.com). A broken engine
-# fails the image build here.
-RUN apt-get update && apt-get install -y --no-install-recommends chromium \
-    && rm -rf /var/lib/apt/lists/* \
-    && eiwa test
+# Live proof: run the FULL suite, including the real CDP session (goto +
+# title on example.com). A broken engine fails the image build here.
+RUN eiwa test
 # NOTE: `eiwa build -o` rejects absolute paths (mkdir -p with empty
 # operand; CLI bug filed upstream), so build relative then move.
 RUN eiwa build -o worker && mkdir -p /out && mv worker /out/worker
@@ -43,7 +43,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY --from=builder /out/worker /usr/local/bin/worker
 
-# Wiring hook for the engine's Chromium launcher (dispatch stub today).
+# Wiring hook for the engine's Chromium launcher.
 ENV CHROMIUM_EXE=/usr/bin/chromium
 ENV PORT=8080
 EXPOSE 8080
