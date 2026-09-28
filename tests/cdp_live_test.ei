@@ -176,19 +176,29 @@ fun cdpLive(): String {
         c.stop()
         return "fail:load"
     }
-    val evaluated = sendRecv(ws, evaluateCmd(5, session.session, "() => document.title")!!, 5)
-    if (evaluated == null) {
-        ws.close()
-        c.stop()
-        return "fail:evaluate"
+    var titleText = ""
+    var tries = 0
+    while (tries < 10 && titleText == "") {
+        val evaluated = sendRecv(ws, evaluateCmd(5, session.session, "() => document.title")!!, 5)
+        if (evaluated == null) {
+            ws.close()
+            c.stop()
+            return "fail:evaluate"
+        }
+        val title = evaluateValue(parseJson(evaluated))
+        if (title != null && title!!.asString() != "") {
+            titleText = title!!.asString()
+        } else {
+            sleepMs(1000)
+            tries = tries + 1
+        }
     }
-    val title = evaluateValue(parseJson(evaluated))
     ws.close()
     c.stop()
-    if (title == null || title!!.asString() == "") {
+    if (titleText == "") {
         return "fail:title"
     }
-    return "ok:${title!!.asString()}"
+    return "ok:$titleText"
 }
 
 test "cdp: live session against real Chromium" {
