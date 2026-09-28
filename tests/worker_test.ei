@@ -6,6 +6,24 @@ import { httpGet } from ".browser.net.http"
 import { wsConnect } from ".browser.net.ws"
 import { requestFrame } from ".browser.protocol.envelope"
 
+fun holdWsOpen(port: Int): String {
+    val ws = wsConnect("127.0.0.1", port, "/")
+    if (ws == null) {
+        return "no-conn"
+    }
+    sleepMs(2000)
+    ws.close()
+    return "held"
+}
+
+fun fetchHealth(port: Int): String {
+    val res = httpGet("127.0.0.1", port, "/health")
+    if (res == null) {
+        return "no-res"
+    }
+    return res.status.toString()
+}
+
 test "worker: routes websocket, health and garbage" {
     assert(routeOf("GET /chat HTTP/1.1\r\nUpgrade: websocket\r\n\r\n") == "ws")
     assert(routeOf("GET /health HTTP/1.0\r\n\r\n") == "health")
@@ -32,4 +50,22 @@ test "worker: health and initialize round-trip" {
     assert(got != null)
     val res = parseJson(got!!)
     assert(res.get("result")!!.get("version")!!.asString() == "1.0")
+}
+
+test "worker: serves a second connection while one is held" {
+    val port = 19880
+    val server = task {
+        serve(port, 2)
+    }
+    sleepMs(150)
+    val holder = task {
+        holdWsOpen(port)
+    }
+    sleepMs(300)
+    val health = task {
+        fetchHealth(port)
+    }
+    assert(health.await() == "200")
+    assert(holder.await() == "held")
+    assert(server.await() == 2)
 }
