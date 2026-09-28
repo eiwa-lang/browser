@@ -1,0 +1,62 @@
+// Driver for a live DevTools connection (§§5.4, 5.5).
+//
+// Owns the WS client, hands out ids and matches responses by id,
+// skipping interleaved events (same shape as the CDP protocol itself).
+
+import { parseJson } from "std.json"
+import { WsClient, wsConnect } from ".browser.net.ws"
+import { httpGet } from ".browser.net.http"
+import { debuggerUrl, parseWsUrl } from ".browser.chromium.cdp"
+
+type CdpConn(val ws: WsClient, var nextId: Int = 1) {
+
+    fun close(): Void {
+        this.ws.close()
+    }
+
+    fun call(build: (Int) -> String?): String? {
+        val id = this.nextId
+        this.nextId = this.nextId + 1
+        val frame = build(id)
+        if (frame == null) {
+            return null
+        }
+        if (this.ws.sendText(frame) == false) {
+            return null
+        }
+        var tries = 0
+        while (tries < 60) {
+            val got = this.ws.recv()
+            if (got == null) {
+                return null
+            }
+            val msg = parseJson(got)
+            val mid = msg.get("id")
+            if (mid != null && mid!!.isNumber() && mid!!.asNumber().toInt() == id) {
+                return got
+            }
+            tries = tries + 1
+        }
+        return null
+    }
+}
+
+fun attachDevtools(host: String, port: Int): CdpConn? {
+    val res = httpGet(host, port, "/json/version")
+    if (res == null || res!!.status != 200) {
+        return null
+    }
+    val debug = debuggerUrl(res!!.body)
+    if (debug == null) {
+        return null
+    }
+    val ep = parseWsUrl(debug)
+    if (ep == null) {
+        return null
+    }
+    val ws = wsConnect(ep.host, ep.port, ep.path)
+    if (ws == null) {
+        return null
+    }
+    return CdpConn(ws)
+}

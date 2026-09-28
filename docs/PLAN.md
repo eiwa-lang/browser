@@ -31,6 +31,8 @@ narrows after an early-return null check (redundant `!!` warns).
 - [x] Real WebSocket transport: pure-Eiwa RFC 6455 client (`net/ws.ei`)
 - [x] Chromium lifecycle: headless fixed-port spawn + terminate (§§28, 29)
 - [x] Minimal HTTP GET + `/json/version` debugger-URL parse (CDP attach)
+- [x] `CdpConn` driver: id correlation, session attach, full flow proven
+      against a fake DevTools target (create→attach→navigate→load→title)
 - [ ] Live CDP session against real Chromium (needs Chromium binary/CI)
 - [ ] `Browser`/`Context`/`Page` managers, `Chromium Adapter` (§§5.4, 5.5)
 

@@ -1,0 +1,167 @@
+import { assert } from "std.core"
+import { parseJson } from "std.json"
+import { sleepMs } from "std.time"
+import { TCPServer, Socket } from "std.net"
+import { buildFrame, wsRecv, writeAll } from ".browser.net.ws"
+import { readHttpRequest, answerHandshake } from ".browser.net.ws_server"
+import { CdpConn, attachDevtools } from ".browser.chromium.connection"
+import { createTargetCmd, attachCmd, navigateCmd, evaluateCmd, parseTargetCreated, parseAttached, evaluateValue, cdpEventMethod } from ".browser.chromium.cdp_commands"
+
+fun fakeCdpVersion(port: Int): String {
+    return "{\"webSocketDebuggerUrl\": \"ws://127.0.0.1:$port/fake\"}"
+}
+
+fun cdpReply(id: Int, result: String): String {
+    return "{\"id\": $id, \"result\": $result}"
+}
+
+fun fakeCdpSession(sock: Socket): String {
+    var open = true
+    while (open) {
+        val f = wsRecv(sock)
+        if (f == null) {
+            return "closed"
+        }
+        if (f.opcode == 8) {
+            return "ok"
+        }
+        if (f.opcode == 1) {
+            val msg = parseJson(f.payload)
+            val id = msg.get("id")
+            if (id != null && id!!.isNumber()) {
+                val num = id!!.asNumber().toInt()
+                val method = msg.get("method")
+                if (method != null && method!!.isString()) {
+                    val name = method!!.asString()
+                    if (name == "Target.createTarget") {
+                        writeAll(sock, buildFrame(1, cdpReply(num, "{\"targetId\": \"T1\"}"), null))
+                    } else if (name == "Target.attachToTarget") {
+                        writeAll(sock, buildFrame(1, cdpReply(num, "{\"sessionId\": \"S1\"}"), null))
+                    } else if (name == "Page.enable") {
+                        writeAll(sock, buildFrame(1, cdpReply(num, "{}"), null))
+                    } else if (name == "Page.navigate") {
+                        writeAll(sock, buildFrame(1, cdpReply(num, "{\"frameId\": \"F1\"}"), null))
+                        writeAll(sock, buildFrame(1, "{\"method\": \"Page.loadEventFired\", \"params\": {}, \"sessionId\": \"S1\"}", null))
+                    } else if (name == "Runtime.evaluate") {
+                        writeAll(sock, buildFrame(1, cdpReply(num, "{\"result\": {\"type\": \"string\", \"value\": \"Example Domain\"}}"), null))
+                    } else {
+                        writeAll(sock, buildFrame(1, cdpReply(num, "{}"), null))
+                    }
+                }
+            }
+        }
+    }
+    return "closed"
+}
+
+fun fakeCdpServer(port: Int): String {
+    val server = TCPServer()
+    if (server.bind(port) == false) {
+        return "bind-fail"
+    }
+    var i = 0
+    while (i < 2) {
+        val conn = server.accept()
+        if (conn == null) {
+            server.close()
+            return "accept-fail"
+        }
+        val head = readHttpRequest(conn)
+        if (head == null) {
+            server.close()
+            return "read-fail"
+        }
+        if (head.indexOf("GET /json/version") == 0) {
+            var res = "HTTP/1.1 200 OK\r\n"
+            res = res + "Content-Type: application/json\r\n"
+            res = res + "Connection: close\r\n"
+            res = res + "\r\n"
+            res = res + fakeCdpVersion(port)
+            writeAll(conn, res)
+            conn.close()
+        } else {
+            if (answerHandshake(conn, head) == false) {
+                server.close()
+                return "handshake-fail"
+            }
+            val out = fakeCdpSession(conn)
+            conn.close()
+            server.close()
+            return out
+        }
+        i = i + 1
+    }
+    server.close()
+    return "http-only"
+}
+
+fun driveTitle(port: Int): String {
+    val conn = attachDevtools("127.0.0.1", port)
+    if (conn == null) {
+        return "no-conn"
+    }
+    val out = driveInner(conn)
+    conn.close()
+    return out
+}
+
+fun driveInner(conn: CdpConn): String {
+    val created = conn.call({ id -> createTargetCmd(id, "https://example.com") })
+    if (created == null) {
+        return "no-create"
+    }
+    val target = parseTargetCreated(parseJson(created))
+    if (target == null) {
+        return "no-target"
+    }
+    val attached = conn.call({ id -> attachCmd(id, target) })
+    if (attached == null) {
+        return "no-attach"
+    }
+    val session = parseAttached(parseJson(attached))
+    if (session == null) {
+        return "no-session"
+    }
+    val navigated = conn.call({ id -> navigateCmd(id, session.session, "https://example.com") })
+    if (navigated == null) {
+        return "no-navigate"
+    }
+    var tries = 0
+    var loaded = false
+    while (tries < 20 && loaded == false) {
+        val got = conn.ws.recv()
+        if (got == null) {
+            return "no-events"
+        }
+        val msg = parseJson(got)
+        if (cdpEventMethod(msg) == "Page.loadEventFired") {
+            loaded = true
+        }
+        tries = tries + 1
+    }
+    if (loaded == false) {
+        return "no-load"
+    }
+    val evaluated = conn.call({ id -> evaluateCmd(id, session.session, "() => document.title") })
+    if (evaluated == null) {
+        return "no-evaluate"
+    }
+    val title = evaluateValue(parseJson(evaluated))
+    if (title == null) {
+        return "no-title"
+    }
+    return "title:${title.asString()}"
+}
+
+test "cdp: driver against a fake DevTools target" {
+    val port = 19891
+    val server = task {
+        fakeCdpServer(port)
+    }
+    sleepMs(150)
+    val first = task {
+        driveTitle(port)
+    }
+    assert(first.await() == "title:Example Domain")
+    assert(server.await() == "http-done" || server.await() == "ok")
+}
