@@ -59,11 +59,11 @@ fun cdpLive(): String {
     }
     var version = ""
     var tries = 0
-    while (tries < 30) {
+    while (tries < 120) {
         val res = httpGet("127.0.0.1", 9333, "/json/version")
         if (res != null && res!!.status == 200) {
             version = res!!.body
-            tries = 99
+            tries = 999
         } else {
             sleepMs(500)
             tries = tries + 1
