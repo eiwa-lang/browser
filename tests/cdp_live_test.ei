@@ -2,7 +2,9 @@ import { assert } from "std.core"
 import { parseJson } from "std.json"
 import { Env } from "std.env"
 import { sleepMs } from "std.time"
-import { SocketClient } from "std.net"
+import { nowMillis } from "std.time"
+import { EventLoop } from "std.coroutines"
+import { Socket, SocketClient } from "std.net"
 import { launchChromium } from ".browser.chromium.chromium"
 import { debuggerUrl, parseWsUrl } from ".browser.chromium.cdp"
 import { createTargetCmd, attachCmd, evaluateCmd, sessionCmd, parseTargetCreated, parseAttached, evaluateValue, cdpEventMethod, cdpSessionOf } from ".browser.chromium.cdp_commands"
@@ -53,6 +55,26 @@ fun waitLoad(ws: WsClient, session: String): Bool {
     return false
 }
 
+fun readHeadDeadline(sock: Socket, ms: Int): String? {
+    val end = nowMillis() + ms
+    var head = ""
+    while (nowMillis() < end) {
+        if (EventLoop.waitReadable(sock.fd, 500) <= 0) {
+            sleepMs(100)
+        } else {
+            val chunk = sock.read(1024)
+            if (chunk == "") {
+                return null
+            }
+            head = head + chunk
+            if (head.indexOf("\r\n\r\n") >= 0) {
+                return head
+            }
+        }
+    }
+    return null
+}
+
 fun probeVersion(port: Int): String {
     val sock = SocketClient.connect("127.0.0.1", port)
     if (sock == null) {
@@ -62,18 +84,11 @@ fun probeVersion(port: Int): String {
         sock.close()
         return "write"
     }
-    var head = ""
-    var guard = 0
-    while (head.indexOf("\r\n\r\n") < 0 && guard < 20) {
-        val chunk = sock.read(1024)
-        if (chunk == "") {
-            sock.close()
-            return "head"
-        }
-        head = head + chunk
-        guard = guard + 1
-    }
+    val head = readHeadDeadline(sock, 3000)
     sock.close()
+    if (head == null) {
+        return "head"
+    }
     if (head.indexOf(" 200 ") < 0) {
         return "head"
     }
@@ -90,7 +105,7 @@ fun cdpLive(): String {
     var noConn = 0
     var noHead = 0
     var badStatus = 0
-    while (tries < 120) {
+    while (tries < 20) {
         val probe = probeVersion(9333)
         if (probe == "ok:200") {
             val res = httpGet("127.0.0.1", 9333, "/json/version")

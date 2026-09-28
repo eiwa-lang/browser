@@ -5,6 +5,8 @@
 // with the Chromium Adapter; currently reported as zero.
 
 import { Socket, TCPServer } from "std.net"
+import { MutableList } from "std.collections"
+import { StackTask } from "std.coroutines"
 import { wsRecv, buildFrame, writeAll } from ".browser.net.ws"
 import { readHttpRequest, answerHandshake } from ".browser.net.ws_server"
 import { dispatch, healthResponse } from ".browser.protocol.dispatch"
@@ -68,24 +70,33 @@ fun serve(port: Int, maxConn: Int): Int {
     if (server.bind(port) == false) {
         return -1
     }
+    val jobs: MutableList<StackTask<String>> = MutableList<StackTask<String>>()
     var served = 0
     var idle = 0
-    // accept() returns null on its 250ms idle timeout too, so null only
-    // stops a bounded run after a long silence; unbounded runs forever.
-    while (maxConn < 0 || served < maxConn) {
+    var stop = false
+    // One task per connection; shared engine state must go behind a
+    // Mutex once browsers/contexts stop being hardcoded below.
+    while ((maxConn < 0 || served < maxConn) && stop == false) {
         val conn = server.accept()
         if (conn == null) {
             idle = idle + 1
             if (maxConn >= 0 && idle > 1200) {
-                server.close()
-                return served
+                stop = true
             }
         } else {
             idle = 0
-            serveOne(conn, 0, 0)
+            val job = task {
+                serveOne(conn, 0, 0)
+            }
+            jobs.add(job)
             served = served + 1
         }
     }
     server.close()
+    var i = 0
+    while (i < jobs.size()) {
+        jobs.get(i).await()
+        i = i + 1
+    }
     return served
 }
