@@ -21,7 +21,7 @@ test "state: cookie commands validate name and context" {
     assert(rpc.method == "context.cookies")
     assert(rpc.argumentString("context") == "ctx-3")
     assert(cookiesCmd(1, "") == null)
-    val cookie = Cookie("sess", "abc", "tribunal.example.gov")
+    val cookie = Cookie("sess", "abc", "shop.example.com")
     val add = parseFrame(addCookieCmd(2, "ctx-3", cookie)!!)
     assert(add.method == "context.addCookie")
     assert(add.params.get("cookie")!!.get("name")!!.asString() == "sess")

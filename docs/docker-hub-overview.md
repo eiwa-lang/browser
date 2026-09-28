@@ -8,7 +8,7 @@
 
 # What is Eiwa Browser Worker?
 
-Headless Chromium automation over a versioned JSON-RPC 2.0 protocol (one message per WebSocket frame). The worker manages Chromium processes and exposes the Eiwa Browser API to Court Scraper workers on a trusted internal network — no ingress, no auth. See the [spec](https://github.com/eiwa-lang/browser/blob/main/docs/Eiwa-Browser-SPEC.md) and [plan](https://github.com/eiwa-lang/browser/blob/main/docs/PLAN.md).
+Headless Chromium automation over a versioned JSON-RPC 2.0 protocol (one message per WebSocket frame). The worker manages Chromium processes and exposes the Eiwa Browser API to scraper workers on a trusted internal network — no ingress, no auth. See the [spec](https://github.com/eiwa-lang/browser/blob/main/docs/Eiwa-Browser-SPEC.md) and [plan](https://github.com/eiwa-lang/browser/blob/main/docs/PLAN.md).
 
 This image bundles the engine binary with headless Chromium, fonts and shared libraries on `debian:trixie-slim`. `ENTRYPOINT` is the worker, `PORT` defaults to `8080`.
 

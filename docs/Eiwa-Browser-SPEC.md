@@ -3,7 +3,7 @@
 **Status:** Draft v0.1\
 **Scope:** Browser automation engine and protocol for Eiwa\
 **Primary use case:** Reliable, containerized browser automation for
-judicial portals and general web automation\
+data portals and general web automation\
 **Design principle:** Eiwa Browser is a browser automation platform, not
 a browser implementation.
 
@@ -76,7 +76,7 @@ Eiwa Browser SHALL NOT:
 -   provide mechanisms intended to evade security controls;
 -   automatically defeat authentication systems;
 -   hide prohibited automation from websites;
--   define judicial-domain business logic.
+-   define domain-specific business logic.
 
 ------------------------------------------------------------------------
 
@@ -86,7 +86,7 @@ Eiwa Browser SHALL NOT:
                     ┌──────────────────────────┐
                     │       Eiwa Application   │
                     │                          │
-                    │ Court Connectors         │
+                    │ Site Connectors         │
                     │ Crawlers                 │
                     │ Scrapers                 │
                     │ E2E Tests                │
@@ -141,7 +141,7 @@ The application contains business logic.
 
 Examples:
 
--   judicial connectors;
+-   site connectors;
 -   scraping workflows;
 -   crawling;
 -   scheduled jobs;
@@ -838,10 +838,10 @@ onResponse { response ->
 ```
 
 Challenge hook (post-MVP, requires `challenge` permission). The solver
-lives in application code (e.g. `eiwa-court`), never in the core:
+lives in application code (e.g. a scraper service), never in the core:
 
 ``` eiwa
-plugin CourtCaptchaHandler
+plugin CaptchaHandler
 
 permissions {
     challenge
@@ -851,7 +851,7 @@ onChallenge { challenge ->
     // Eiwa code: enqueue for human operator or authorized provider,
     // suspend within challengeTimeout, then resume or abort.
     if (challenge.type == "captcha") {
-        courtQueue.enqueue(challenge)
+        reviewQueue.enqueue(challenge)
         challenge.awaitDecision()
     } else {
         challenge.abort("unsupported challenge")
@@ -863,7 +863,7 @@ Application:
 
 ``` eiwa
 browser.use(NetworkLogger)
-browser.use(CourtCaptchaHandler)
+browser.use(CaptchaHandler)
 ```
 
 Plugin lifecycle:
@@ -1509,23 +1509,22 @@ Requirements:
 
 ------------------------------------------------------------------------
 
-# 39. Judicial Connector Architecture (out of scope, consumer-owned)
+# 39. Consumer Connector Architecture (out of scope, consumer-owned)
 
 Eiwa Browser SHALL remain domain agnostic.
 
-Judicial automation SHALL be implemented separately in the consumer
-service (e.g. `eiwa-court`). Normalization, `Process Model`, and
-PostgreSQL persistence (diagram flow steps 4-6) are NOT part of this
+Domain automation SHALL be implemented separately in the consumer
+service (e.g. a scraper service in its own repo). Normalization, record
+models, and persistence (diagram flow steps 4-6) are NOT part of this
 spec — Eiwa Browser returns page artifacts only (`text`, `content`,
 `attribute`, `evaluate` results); the consumer normalizes and persists.
 
 ``` text
-eiwa-court
+scraper-service
 ├── core
 ├── connectors
-│   ├── tjsp
-│   ├── tjrj
-│   ├── tjmg
+│   ├── shop-a
+│   ├── shop-b
 │   └── ...
 └── workers
 ```
@@ -1533,7 +1532,7 @@ eiwa-court
 A connector MAY choose HTTP or Browser automation.
 
 ``` text
-CourtConnector
+SiteConnector
        │
        ├── HttpConnector
        │
@@ -1543,9 +1542,9 @@ CourtConnector
 Example:
 
 ``` eiwa
-connector TJSP
+connector ShopA
 
-searchProcess(number) {
+searchProduct(sku) {
     // direct HTTP when possible
 }
 ```
@@ -1553,9 +1552,9 @@ searchProcess(number) {
 Another connector:
 
 ``` eiwa
-connector TJXX
+connector ShopXX
 
-searchProcess(number) {
+searchProduct(sku) {
     val page = browser.newPage()
     ...
 }
@@ -1565,7 +1564,7 @@ searchProcess(number) {
 
 # 40. HTTP-First Strategy (consumer decision)
 
-The consumer (judicial system) SHALL prefer direct HTTP/API access when
+The consumer (scraper service) SHALL prefer direct HTTP/API access when
 an authorized interface is available. The HTTP-vs-Browser fallback
 decision lives in the connector, not in Eiwa Browser.
 
@@ -1598,13 +1597,13 @@ DOM
  ↓
 Locator
  ↓
-Structured Process
+Structured Record
 ```
 
 Eiwa Browser provides the browser primitives.
 
-The judicial connector provides the extraction rules, plus all
-normalization, `Process Model` mapping, and persistence outside this
+The site connector provides the extraction rules, plus all
+normalization, record mapping, and persistence outside this
 spec.
 
 ------------------------------------------------------------------------
@@ -1619,9 +1618,9 @@ strategy remains application-level.
 Example:
 
 ``` text
-Process
- ├── movements
- ├── documents
+Catalog
+ ├── categories
+ ├── products
  ├── related pages
  └── attachments
 ```
@@ -1641,7 +1640,7 @@ page.click("#search")
 page.waitFor(".result")
 ```
 
-Automation is a capability of Eiwa Browser, not the judicial domain.
+Automation is a capability of Eiwa Browser, not the consumer domain.
 
 ------------------------------------------------------------------------
 
@@ -1691,7 +1690,7 @@ eiwa-browser/
     ├── basic.eiwa          (connect, newContext/newPage, goto, text, close)
     ├── scraping.eiwa       (locators, waitFor, evaluate)
     ├── network.eiwa        (onRequest/onResponse logging)
-    └── court-example/      (reference consumer service)
+    └── scraping-demo/    (reference consumer service)
 ```
 
 K8s manifests live in the consumer repo, not here (§54).
@@ -1782,34 +1781,34 @@ browser.close()
 
 ------------------------------------------------------------------------
 
-# 47. Judicial Example
+# 47. Consumer Example
 
 ``` eiwa
 use browser
 
-connector TJExample
+connector ShopExample
 
-searchProcess(number) {
+searchProduct(sku) {
     val browser = Browser.launch(headless: true)
     val context = browser.newContext()
 
     try
         val page = context.newPage()
 
-        page.goto("https://tribunal.example.gov")
+        page.goto("https://shop.example.com")
 
-        page.locator("#process-number")
-            .fill(number)
+        page.locator("#search-box")
+            .fill(sku)
 
-        page.locator("#search")
+        page.locator("#search-button")
             .click()
 
-        page.waitFor(".process-result")
+        page.waitFor(".product-detail")
 
-        return Process(
-            number: page.locator(".number").text(),
-            class: page.locator(".class").text(),
-            subject: page.locator(".subject").text()
+        return Product(
+            sku: page.locator(".sku").text(),
+            name: page.locator(".name").text(),
+            price: page.locator(".price").text()
         )
     finally
         page.close()
@@ -1852,7 +1851,7 @@ browser.use(NetworkLogger)
 # 49. Challenge Plugin Boundary (post-MVP)
 
 The core exposes detection plus pause/resume primitives; solving is
-application-owned (e.g. `eiwa-court`):
+application-owned (e.g. a scraper service):
 
 ``` eiwa
 onChallenge { challenge ->
@@ -2046,7 +2045,7 @@ Implement:
 # 54. Production Topology
 
 Three services (diagram names). Connectors are pluggable modules inside
-the Court Scraper Workers, not services. PostgreSQL is consumer-owned
+the Scraper Workers, not services. PostgreSQL is consumer-owned
 context (out of browser scope, §39).
 
 Recommended production topology:
@@ -2058,11 +2057,11 @@ Recommended production topology:
                                     │
                                     ▼
                          ┌─────────────────────┐
-                         │ Court Scraper       │
+                         │ Scraper             │
                          │ Workers             │
                          │                     │
                          │ HTTP Connectors     │
-                         │ Court Connectors    │
+                         │ Site Connectors    │
                          └──────────┬──────────┘
                                     │
                          Browser jobs only
@@ -2074,7 +2073,7 @@ Recommended production topology:
                  Chromium        Chromium        Chromium
                     │               │               │
                     ▼               ▼               ▼
-                 Tribunal       Tribunal       Tribunal
+                 Target Site    Target Site    Target Site
 ```
 
 HTTP-only workloads SHALL NOT require Chromium. Persisted results go to
@@ -2098,7 +2097,7 @@ The project SHALL follow these principles:
 10. **Browser workers are disposable.**
 11. **Headless execution is the default.**
 12. **Containers are the default deployment unit.**
-13. **The judicial domain stays outside Eiwa Browser.**
+13. **The consumer domain stays outside Eiwa Browser.**
 14. **Challenges are detected, not bypassed by the core.**
 15. **The initial API remains intentionally small.**
 
@@ -2111,7 +2110,7 @@ The project SHALL follow these principles:
                                  │
               ┌──────────────────┴──────────────────┐
               │                                     │
-        Eiwa Court                              Other Apps
+        Scraper Apps                           Other Apps
               │                                     │
       ┌───────┴────────┐                            │
       │                │                            │

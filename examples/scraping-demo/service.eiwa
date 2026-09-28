@@ -1,4 +1,4 @@
-// Reference consumer service (eiwa-court style, outside browser scope).
+// Reference scraping service (generic consumer, outside browser scope).
 // HTTP-first fallback + pool via Browser.connect + normalization in-app.
 use browser
 use arest
@@ -8,11 +8,11 @@ val browser = Browser.connect(
     poolSize: 8
 )
 
-connector TJExample
+scraper ProductScraper
 
-searchProcess(number) {
+searchProduct(sku) {
     // 1. HTTP first when an authorized interface exists.
-    val res = httpGet("https://tribunal.example.gov/api/process/$number")
+    val res = httpGet("https://shop.example.com/api/products/$sku")
     if (res.ok) {
         return normalize(res.body())
     }
@@ -22,14 +22,14 @@ searchProcess(number) {
     try
         val page = context.newPage()
         try
-            page.goto("https://tribunal.example.gov")
+            page.goto("https://shop.example.com")
 
-            page.locator("#process-number").fill(number)
-            page.locator("#search").click()
-            page.waitFor(".process-result")
+            page.locator("#search-box").fill(sku)
+            page.locator("#search-button").click()
+            page.waitFor(".product-detail")
 
             // 3. Raw artifacts only; normalize + persist in THIS service.
-            val raw = page.locator(".process-result").text()
+            val raw = page.locator(".product-detail").text()
             return normalize(raw)
         finally
             page.close()

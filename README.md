@@ -8,12 +8,13 @@ Canonical spec: `docs/Eiwa-Browser-SPEC.md`.
 ## Layout (§44)
 
 - `protocol/` — JSON-RPC schema, `protocol.yaml`, `version`
-- `src/` — client (`browser/`, `context/`, `page/`, `locator/`,
-  `network/`, `download/`, `storage/`, `plugins/`, `protocol/`,
-  `errors/`), engine (`chromium/`)
-- `tests/` — protocol, browser, page, network, plugins
-- `docker/chromium/` — browser worker image
-- `examples/` — usage scripts + `court-example/` reference consumer
+- `src/` — `main.ei` worker entry; `browser/` (client, pool, protocol,
+  net, worker, engine, chromium, storage, plugins, diagnostics),
+  `context/`, `page/`
+- `tests/` — one `*_test.ei` per area (`eiwa test` runs all)
+- `Dockerfile` — multi-stage worker image (toolchain + Chromium runtime)
+- `.github/workflows/` — CI (`eiwa test` + build) and release (Docker Hub)
+- `examples/` — usage scripts + `scraping-demo/` reference consumer
 
 ## MVP (§45)
 
