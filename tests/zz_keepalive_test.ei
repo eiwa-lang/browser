@@ -1,0 +1,54 @@
+import { assert } from "std.core"
+import { TCPServer } from "std.net"
+import { sleepMs } from "std.time"
+import { httpGet } from ".browser.net.http"
+import { writeAll } from ".browser.net.ws"
+
+fun keepAliveServer(port: Int): String {
+    val server = TCPServer()
+    if (server.bind(port) == false) {
+        return "bind-fail"
+    }
+    val conn = server.accept()
+    if (conn == null) {
+        server.close()
+        return "accept-fail"
+    }
+    var req = ""
+    while (req.indexOf("\r\n\r\n") < 0) {
+        val chunk = conn.read(1024)
+        if (chunk == "") {
+            conn.close()
+            server.close()
+            return "read-fail"
+        }
+        req = req + chunk
+    }
+    var res = "HTTP/1.1 200 OK\r\n"
+    res = res + "Content-Type: application/json\r\n"
+    res = res + "Content-Length: 5\r\n"
+    res = res + "\r\n"
+    res = res + "hello"
+    if (writeAll(conn, res) == false) {
+        conn.close()
+        server.close()
+        return "write-fail"
+    }
+    sleepMs(3000)
+    conn.close()
+    server.close()
+    return "ok"
+}
+
+test "http: keep-alive server without close" {
+    val port = 19890
+    val server = task {
+        keepAliveServer(port)
+    }
+    sleepMs(150)
+    val res = httpGet("127.0.0.1", port, "/json/version")
+    assert(server.await() == "ok")
+    assert(res != null)
+    assert(res!!.status == 200)
+    assert(res!!.body == "hello")
+}

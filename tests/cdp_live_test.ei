@@ -2,11 +2,12 @@ import { assert } from "std.core"
 import { parseJson } from "std.json"
 import { Env } from "std.env"
 import { sleepMs } from "std.time"
+import { SocketClient } from "std.net"
 import { launchChromium } from ".browser.chromium.chromium"
 import { debuggerUrl, parseWsUrl } from ".browser.chromium.cdp"
 import { createTargetCmd, attachCmd, evaluateCmd, sessionCmd, parseTargetCreated, parseAttached, evaluateValue, cdpEventMethod, cdpSessionOf } from ".browser.chromium.cdp_commands"
 import { httpGet } from ".browser.net.http"
-import { wsConnect, WsClient } from ".browser.net.ws"
+import { wsConnect, WsClient, writeAll } from ".browser.net.ws"
 
 fun chromiumExe(): String {
     val exe = Env.get("CHROMIUM_EXE")
@@ -52,6 +53,33 @@ fun waitLoad(ws: WsClient, session: String): Bool {
     return false
 }
 
+fun probeVersion(port: Int): String {
+    val sock = SocketClient.connect("127.0.0.1", port)
+    if (sock == null) {
+        return "conn"
+    }
+    if (writeAll(sock, "GET /json/version HTTP/1.0\r\nHost: x\r\nConnection: close\r\n\r\n") == false) {
+        sock.close()
+        return "write"
+    }
+    var head = ""
+    var guard = 0
+    while (head.indexOf("\r\n\r\n") < 0 && guard < 20) {
+        val chunk = sock.read(1024)
+        if (chunk == "") {
+            sock.close()
+            return "head"
+        }
+        head = head + chunk
+        guard = guard + 1
+    }
+    sock.close()
+    if (head.indexOf(" 200 ") < 0) {
+        return "head"
+    }
+    return "ok:200"
+}
+
 fun cdpLive(): String {
     val c = launchChromium(chromiumExe(), 9333)
     if (c == null) {
@@ -59,19 +87,34 @@ fun cdpLive(): String {
     }
     var version = ""
     var tries = 0
+    var noConn = 0
+    var noHead = 0
+    var badStatus = 0
     while (tries < 120) {
-        val res = httpGet("127.0.0.1", 9333, "/json/version")
-        if (res != null && res!!.status == 200) {
-            version = res!!.body
-            tries = 999
+        val probe = probeVersion(9333)
+        if (probe == "ok:200") {
+            val res = httpGet("127.0.0.1", 9333, "/json/version")
+            if (res != null && res!!.status == 200) {
+                version = res!!.body
+                tries = 999
+            } else {
+                badStatus = badStatus + 1
+                sleepMs(500)
+                tries = tries + 1
+            }
+        } else if (probe == "conn") {
+            noConn = noConn + 1
+            sleepMs(500)
+            tries = tries + 1
         } else {
+            noHead = noHead + 1
             sleepMs(500)
             tries = tries + 1
         }
     }
     if (version == "") {
         c.stop()
-        return "fail:version"
+        return "fail:version conn=$noConn head=$noHead status=$badStatus"
     }
     val debug = debuggerUrl(version)
     if (debug == null) {
