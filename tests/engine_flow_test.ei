@@ -163,6 +163,9 @@ test "engine: full automation flow against a fake" {
     val client = task {
         engineClient(port)
     }
-    assert(client.await() == "ok")
+    val cres = client.await()
+    echo("client:")
+    echo(cres)
+    assert(cres == "ok")
     assert(server.await() == "ok")
 }

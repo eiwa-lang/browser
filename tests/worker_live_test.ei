@@ -227,6 +227,9 @@ test "worker: engine dispatch over a live connection" {
         clientSide(19897)
     }
     assert(client.await() == "ok")
-    assert(worker.await() == "ws")
+    val wres = worker.await()
+    echo("worker:")
+    echo(wres)
+    assert(wres == "ws")
     assert(cdp.await() == "ok")
 }
