@@ -1,8 +1,6 @@
 import { Env } from "std.env"
-import { sleepMs } from "std.time"
 import { serve, serveEngine } from ".browser.worker.server"
-import { launchChromium } from ".browser.chromium.chromium"
-import { attachDevtools } from ".browser.chromium.connection"
+import { ChromiumAdapter } from ".browser.chromium.adapter"
 import { Engine } from ".browser.engine.engine"
 
 fun chromiumPort(): Int {
@@ -18,22 +16,7 @@ fun chromiumExe(): String {
 }
 
 fun bootEngine(): Engine? {
-    val exe = chromiumExe()
-    val port = chromiumPort()
-    var tries = 0
-    while (tries < 60) {
-        val c = launchChromium(exe, port)
-        if (c != null) {
-            val conn = attachDevtools("127.0.0.1", port)
-            if (conn != null) {
-                return Engine(c, conn)
-            }
-            c.stop()
-        }
-        sleepMs(1000)
-        tries = tries + 1
-    }
-    return null
+    return ChromiumAdapter(chromiumExe(), chromiumPort()).boot()
 }
 
 fun main() {

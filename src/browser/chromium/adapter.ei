@@ -1,0 +1,52 @@
+// Chromium Adapter: named unit owning the browser process lifecycle
+// (§§5.4, 5.5, 28, 29).
+//
+// `boot` launches headless Chromium and attaches the Engine over the
+// DevTools endpoint, retrying while the browser opens its port.
+// `shutdown` is graceful: it drops the CDP connection first, gives the
+// process a bounded window to exit on its own, then terminates and
+// verifies the process is gone.
+
+import { sleepMs } from "std.time"
+import { launchChromium } from ".browser.chromium.chromium"
+import { attachDevtools } from ".browser.chromium.connection"
+import { Engine } from ".browser.engine.engine"
+
+type ChromiumAdapter(val exe: String, val port: Int) {
+
+    fun boot(): Engine? {
+        if (this.exe == "" || this.port <= 0) {
+            return null
+        }
+        val chromium = launchChromium(this.exe, this.port)
+        if (chromium == null) {
+            return null
+        }
+        var tries = 0
+        while (tries < 50) {
+            val conn = attachDevtools("127.0.0.1", this.port)
+            if (conn != null) {
+                return Engine(chromium, conn)
+            }
+            sleepMs(100)
+            tries = tries + 1
+        }
+        chromium.stop()
+        return null
+    }
+
+    fun shutdown(engine: Engine, timeoutMs: Int = 5000): Bool {
+        engine.close()
+        var waited = 0
+        while (engine.chromium.alive() && waited < timeoutMs) {
+            sleepMs(100)
+            waited = waited + 100
+        }
+        if (engine.chromium.alive()) {
+            if (engine.chromium.stop() == false) {
+                return false
+            }
+        }
+        return engine.chromium.alive() == false
+    }
+}

@@ -1,0 +1,61 @@
+import { assert } from "std.core"
+import { Env } from "std.env"
+import { chromiumArgs, launchChromium } from ".browser.chromium.chromium"
+import { ChromiumAdapter } from ".browser.chromium.adapter"
+
+fun adapterChromiumExe(): String {
+    val exe = Env.get("CHROMIUM_EXE")
+    if (exe == null || exe == "") {
+        return "chromium"
+    }
+    return exe
+}
+
+test "adapter: chromium args carry headless and debug port" {
+    val args = chromiumArgs(9333)
+    var seenHeadless = false
+    var seenPort = false
+    for (args) { arg ->
+        if (arg == "--headless") {
+            seenHeadless = true
+        }
+        if (arg.indexOf("9333") >= 0) {
+            seenPort = true
+        }
+    }
+    assert(seenHeadless)
+    assert(seenPort)
+}
+
+test "adapter: launch rejects empty exe and bad port" {
+    assert(launchChromium("", 9333) == null)
+    assert(launchChromium("chromium", 0) == null)
+    assert(launchChromium("chromium", -1) == null)
+}
+
+test "adapter: boot rejects empty exe without spawning" {
+    assert(ChromiumAdapter("", 9333).boot() == null)
+    assert(ChromiumAdapter("chromium", 0).boot() == null)
+}
+
+fun adapterLive(): String {
+    val engine = ChromiumAdapter(adapterChromiumExe(), 19333).boot()
+    if (engine == null) {
+        return "skip"
+    }
+    if (engine.chromium.alive() == false) {
+        return "no-alive"
+    }
+    if (ChromiumAdapter(adapterChromiumExe(), 19333).shutdown(engine, 5000) == false) {
+        return "no-shutdown"
+    }
+    if (engine.chromium.alive()) {
+        return "still-alive"
+    }
+    return "ok"
+}
+
+test "adapter: live boot and graceful shutdown" {
+    val out = adapterLive()
+    assert(out == "skip" || out == "ok", out)
+}

@@ -86,7 +86,7 @@ Eiwa Browser SHALL NOT:
                     ┌──────────────────────────┐
                     │       Eiwa Application   │
                     │                          │
-                    │ Site Connectors         │
+                    │ Site Connectors          │
                     │ Crawlers                 │
                     │ Scrapers                 │
                     │ E2E Tests                │
@@ -110,14 +110,14 @@ Eiwa Browser SHALL NOT:
                     │ Browser Manager          │
                     │ Context Manager          │
                     │ Page Manager             │
-                    │ Locator Engine            │
+                    │ Locator Engine           │
                     │ Network Manager          │
                     │ Event Dispatcher         │
-                    │ Plugin Runtime            │
+                    │ Plugin Runtime           │
                     │ Challenge Detector       │
                     └────────────┬─────────────┘
                                  │
-                              CDP
+                                CDP
                                  │
                                  ▼
                     ┌──────────────────────────┐
@@ -255,7 +255,7 @@ Browser Engine
 Chromium Adapter
       │
       ▼
-CDP
+     CDP
       │
       ▼
 Chromium
@@ -1195,7 +1195,7 @@ Recommended deployment:
 
 ``` text
 ┌──────────────────────────────────────┐
-│ Browser Worker Container              │
+│ Browser Worker Container             │
 │                                      │
 │ Eiwa Browser Engine                  │
 │          │                           │
@@ -2108,15 +2108,15 @@ The project SHALL follow these principles:
 ``` text
                            Eiwa Ecosystem
                                  │
-              ┌──────────────────┴──────────────────┐
-              │                                     │
-        Scraper Apps                           Other Apps
-              │                                     │
-      ┌───────┴────────┐                            │
-      │                │                            │
- HTTP Connectors   Browser Connectors               │
-      │                │                            │
-      │                ▼                            │
+              ┌──────────────────┴────────────-──────┐
+              │                                      │
+        Scraper Apps                            Other Apps
+              │                                      │
+      ┌───────┴────────┐                             │
+      │                │                             │
+ HTTP Connectors   Browser Connectors                │
+      │                │                             │
+      │                ▼                             │
       │          ┌──────────────┐                    │
       │          │ Eiwa Browser │                    │
       │          └──────┬───────┘                    │

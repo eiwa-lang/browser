@@ -39,8 +39,8 @@ narrows after an early-return null check (redundant `!!` warns).
       newContext/newPage/goto/text/content/close (+initialize/version
       fallback), Mutex-guarded, proven end-to-end against a fake
 - [x] `ContextManager`/`PageManager` state machines + `Engine` facade (§5.4)
-- [ ] `bootEngine` live-attach path + graceful shutdown + `Chromium Adapter`
-      as named unit (§§5.4, 5.5)
+- [x] `bootEngine` live-attach path + graceful shutdown + `ChromiumAdapter`
+      as named unit (§§5.4, 5.5; `chromium/adapter.ei`, live-proven in Docker)
 
 `std.process` blocker resolved by `eiwa-lang@d54fc13`
 (spawn/alive/kill/wait/terminate).
