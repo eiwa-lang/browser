@@ -5,7 +5,7 @@
 // (server frames are unmasked).
 
 import { Socket } from "std.net"
-import { writeAll, wsAccept } from ".browser.net.ws"
+import { writeAll, wsAccept, readChunk } from ".browser.net.ws"
 
 fun wsRequestKey(req: String): String? {
     val lines = req.split("\r\n")
@@ -36,7 +36,7 @@ fun readHttpRequest(sock: Socket): String? {
         if (req.length > 8192) {
             return null
         }
-        val chunk = sock.read(1024)
+        val chunk = readChunk(sock, 1024)
         if (chunk == "") {
             return null
         }

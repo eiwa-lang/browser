@@ -34,10 +34,7 @@ type CdpConn(val ws: WsClient, val reader: FrameReader, val events: MutableList<
                 return null
             }
             val f = if (left < 2000) this.reader.readFrame(left) else this.reader.readFrame(2000)
-            if (f == null) {
-                return null
-            }
-            if (f.opcode == 1 || f.opcode == 2) {
+            if (f != null && (f.opcode == 1 || f.opcode == 2)) {
                 val msg = parseJson(f.payload)
                 val mid = msg.get("id")
                 if (mid != null && mid!!.isNumber() && mid!!.asNumber().toInt() == id) {
@@ -66,10 +63,7 @@ fun awaitEvent(conn: CdpConn, want: (String) -> Bool, timeoutMs: Int): Bool {
             return false
         }
         val f = if (left < 2000) conn.reader.readFrame(left) else conn.reader.readFrame(2000)
-        if (f == null) {
-            return false
-        }
-        if (f.opcode == 1 || f.opcode == 2) {
+        if (f != null && (f.opcode == 1 || f.opcode == 2)) {
             if (want(f.payload)) {
                 return true
             }

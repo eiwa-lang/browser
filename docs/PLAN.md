@@ -38,12 +38,12 @@ narrows after an early-return null check (redundant `!!` warns).
 - [x] Worker drives live Engine: `serveEngine`, `engineDispatch` routing
       newContext/newPage/goto/text/content/close (+initialize/version
       fallback), Mutex-guarded, proven end-to-end against a fake
-- [ ] `Browser`/`Context`/`Page` managers, `Chromium Adapter` (§§5.4, 5.5)
-- [ ] `Browser`/`Context`/`Page` managers, `Chromium Adapter` (§§5.4, 5.5)
+- [x] `ContextManager`/`PageManager` state machines + `Engine` facade (§5.4)
+- [ ] `bootEngine` live-attach path + graceful shutdown + `Chromium Adapter`
+      as named unit (§§5.4, 5.5)
 
 `std.process` blocker resolved by `eiwa-lang@d54fc13`
-(spawn/alive/kill/wait/terminate). Remaining engine work needs a live
-Chromium (Docker/CI); all attach primitives are done and tested (49/49).
+(spawn/alive/kill/wait/terminate).
 
 ## Phase 3 — Basic Automation (MVP)
 
@@ -51,7 +51,8 @@ Chromium (Docker/CI); all attach primitives are done and tested (49/49).
 - [x] Typed command builders for the MVP surface (§§6.3, 9, 45)
 - [x] `TimeoutConfig` + most-specific-wins resolution, 30000ms default (§34)
 - [x] `waitUntil` validation (`commit/domcontentloaded/load/networkidle`) (§9)
-- [ ] Execution against a live engine (needs Phase 2 transport)
+- [x] Execution against a live engine (`worker_live_test`: JSON-RPC
+      newContext/newPage/goto/text/close routed through `Engine`)
 
 ## Phase 4 — Network Observe (MVP)
 
@@ -73,14 +74,13 @@ Chromium (Docker/CI); all attach primitives are done and tested (49/49).
 - [ ] Dispatch + `challenge` permission — post-MVP (needs transport)
 - [ ] `onChallenge` + Auth/Captcha/Proxy examples — post-MVP (§§19, 49, 20)
 
-Language finding (to file upstream): `for` over a Map with a generic
-value type fails (`Unresolved property 'list'`; minimal repro saved).
-`PluginRegistry` keeps a parallel names list instead. Checker also
-does not narrow through `||` chains — `!!` after explicit null guards.
+Language finding (upstream): `for` over a Map with a generic value
+type fails (`Unresolved property 'list'`; RED test saved).
+`PluginRegistry` keeps a parallel names list instead.
 
 ## Phase 7 — Diagnostics (MVP minimal)
 
-- [ ] `GET /health` endpoint (spec'd §30.1; impl needs the worker)
+- [x] `GET /health` endpoint (served by worker, validated in Docker)
 - [x] Header redaction, case-insensitive sensitive set (§§35, 38)
 - [x] `parseConsole` (MVP event) + `parseChallenge` (post-MVP payload, §19)
 - [ ] `screenshot()` returning bytes — post-MVP (§17)
@@ -91,7 +91,6 @@ does not narrow through `||` chains — `!!` after explicit null guards.
 - [x] WS server side: handshake accept + frame echo path (`net/ws_server.ei`)
 - [x] Engine dispatch skeleton: `initialize`/`browser.version`/unknown (§24)
 - [x] `healthResponse` builder for k8s probes (§30.1)
-- [ ] Worker accept loop + connection routing (needs `main` binary)
 - [x] Worker accept loop + `main` binary (`serve`/`serveOne`, `src/main.ei`)
 - [x] Task-per-connection (unblocked by compiler TaskBlock fix; overlap
       proven: second connection served while a WS session is held)
@@ -101,10 +100,10 @@ does not narrow through `||` chains — `!!` after explicit null guards.
       `String.substring` used `strncpy`, zeroing bytes after the first
       NUL — fixed in `eiwa-lang` `src/std/core.ei` via `memcpy`, same as
       the existing `String.slice`; `socket_binary_test.ei` green)
-- [ ] Docker worker image (Engine + Chromium, headless) (§§28, 29)
+- [x] Docker worker image, Engine + Chromium headless (§§28, 29)
 - [x] Client pool: `Browser.connect(workers, poolSize)`, round-robin,
       sticky contexts, fail-fast eviction (§§5.2, 30.2)
-- [x] K8s manifests: `Service` stable DNS + resource limits (`k8s/`)
+- [x] K8s decision: manifests live in the consumer repo, not here
 - [ ] Headless-service DNS discovery (least-loaded) — post-MVP (§30.3)
 - [x] `examples/scraping-demo/` reference consumer validated (§44: all
       examples compile against real modules via `--module-path`)

@@ -159,6 +159,10 @@ type Engine(
         return out
     }
 
+    fun close(): Void {
+        this.conn.close()
+    }
+
     fun dropContext(ctx: String): Bool {
         val cdpCtx = this.contexts.cdpId(ctx)
         if (cdpCtx == null) {

@@ -7,7 +7,7 @@
 import { Socket } from "std.net"
 import { EventLoop } from "std.coroutines"
 import { nowMillis } from "std.time"
-import { WsFrame, parseHeader, applyMask } from ".browser.net.ws"
+import { WsFrame, parseHeader, applyMask, readChunk } from ".browser.net.ws"
 
 type FrameReader(val sock: Socket, var pending: String = "") {
 
@@ -15,7 +15,7 @@ type FrameReader(val sock: Socket, var pending: String = "") {
         if (EventLoop.waitReadable(this.sock.fd, ms) <= 0) {
             return false
         }
-        val chunk = this.sock.read(4096)
+        val chunk = readChunk(this.sock, 4096)
         if (chunk == "") {
             return false
         }

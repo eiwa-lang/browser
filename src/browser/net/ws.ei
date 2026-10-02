@@ -6,6 +6,7 @@
 // inbound frames are a protocol error.
 
 import { NativeMemory } from "std.core"
+import { sleepMs } from "std.time"
 import { Socket, SocketClient } from "std.net"
 import { Crypto } from "crypto.crypto"
 
@@ -156,11 +157,24 @@ fun buildFrame(opcode: Int, payload: String, mask: String?): String {
     return String(buf, total)
 }
 
+fun readChunk(sock: Socket, maxLen: Int): String {
+    var streak = 0
+    while (streak < 3) {
+        val chunk = sock.read(maxLen)
+        if (chunk != "") {
+            return chunk
+        }
+        streak = streak + 1
+        sleepMs(5)
+    }
+    return ""
+}
+
 fun readExact(sock: Socket, n: Int): String? {
     val buf = Standard.gcMalloc(n + 1)
     var got = 0
     while (got < n) {
-        val chunk = sock.read(n - got)
+        val chunk = readChunk(sock, n - got)
         if (chunk == "") {
             return null
         }
@@ -264,7 +278,7 @@ fun readHandshake(sock: Socket, key: String): Bool {
         if (res.length > 8192) {
             return false
         }
-        val chunk = sock.read(1)
+        val chunk = readChunk(sock, 1)
         if (chunk == "") {
             return false
         }

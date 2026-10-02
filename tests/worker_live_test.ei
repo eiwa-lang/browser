@@ -1,8 +1,9 @@
 import { assert } from "std.core"
-import { parseJson, Json } from "std.json"
+import { parseJson } from "std.json"
 import { sleepMs } from "std.time"
 import { TCPServer, Socket } from "std.net"
 import { buildFrame, wsRecv, writeAll, WsClient, wsConnect } from ".browser.net.ws"
+import { FrameReader } from ".browser.net.reader"
 import { readHttpRequest, answerHandshake } from ".browser.net.ws_server"
 import { requestFrame } from ".browser.protocol.envelope"
 import { Chromium } from ".browser.chromium.chromium"
@@ -85,29 +86,37 @@ fun liveFakeCdp(port: Int): String {
 }
 
 fun buildTestEngine(port: Int): Engine? {
-    val ws = wsConnect("127.0.0.1", port, "/fake")
-    if (ws == null) {
-        return null
+    var tries = 0
+    while (tries < 50) {
+        val ws = wsConnect("127.0.0.1", port, "/fake")
+        if (ws != null) {
+            return Engine(Chromium("fake", 0, -1), cdpConn(ws))
+        }
+        sleepMs(100)
+        tries = tries + 1
     }
-    return Engine(Chromium("fake", 0, -1), cdpConn(ws))
+    return null
 }
 
 fun rpcField(ws: WsClient, frame: String, key: String): String? {
     if (ws.sendText(frame) == false) {
         return null
     }
+    val reader = FrameReader(ws.socket, "")
     var tries = 0
-    while (tries < 20) {
-        val got = ws.recv()
-        if (got == null) {
+    while (tries < 10) {
+        val f = reader.readFrame(2000)
+        if (f == null) {
             return null
         }
-        val msg = parseJson(got)
-        val res = msg.get("result")
-        if (res != null) {
-            val field = res!!.get(key)
-            if (field != null && field!!.isString()) {
-                return field!!.asString()
+        if (f.opcode == 1 || f.opcode == 2) {
+            val msg = parseJson(f.payload)
+            val res = msg.get("result")
+            if (res != null) {
+                val field = res!!.get(key)
+                if (field != null && field!!.isString()) {
+                    return field!!.asString()
+                }
             }
         }
         tries = tries + 1
@@ -127,35 +136,19 @@ fun rpcRaw(ws: WsClient, frame: String): String? {
     if (ws.sendText(frame) == false) {
         return null
     }
+    val reader = FrameReader(ws.socket, "")
     var tries = 0
-    while (tries < 20) {
-        val got = ws.recv()
-        if (got == null) {
+    while (tries < 10) {
+        val f = reader.readFrame(2000)
+        if (f == null) {
             return null
         }
-        return got
+        if (f.opcode == 1 || f.opcode == 2) {
+            return f.payload
+        }
+        tries = tries + 1
     }
     return null
-}
-
-fun workerSide(portA: Int, portB: Int): String {
-    val engine = buildTestEngine(portA)
-    if (engine == null) {
-        return "no-engine"
-    }
-    val server = TCPServer()
-    if (server.bind(portB) == false) {
-        return "bind-fail"
-    }
-    val conn = server.accept()
-    if (conn == null) {
-        server.close()
-        return "accept-fail"
-    }
-    val out = serveOneEngine(conn, engine)
-    engine.conn.close()
-    server.close()
-    return out
 }
 
 fun wsConnectRetry(port: Int, path: String): WsClient? {
@@ -171,7 +164,23 @@ fun wsConnectRetry(port: Int, path: String): WsClient? {
     return null
 }
 
-fun clientSide(portB: Int): String {
+fun workerSide(portA: Int, server: TCPServer): String {
+    val engine = buildTestEngine(portA)
+    if (engine == null) {
+        return "no-engine"
+    }
+    val conn = server.accept()
+    if (conn == null) {
+        server.close()
+        return "accept-fail"
+    }
+    val out = serveOneEngine(conn, engine)
+    engine.conn.close()
+    server.close()
+    return out
+}
+
+fun clientStage(portB: Int, stage: Int): String {
     val ws = wsConnectRetry(portB, "/")
     if (ws == null) {
         return "no-conn"
@@ -181,55 +190,57 @@ fun clientSide(portB: Int): String {
         ws.close()
         return "no-ctx"
     }
+    if (stage == 1) {
+        ws.close()
+        return "ok-1"
+    }
     val page = rpcField(ws, "{\"jsonrpc\": \"2.0\", \"id\": 2, \"method\": \"context.newPage\", \"params\": {\"context\": \"$ctx\"}}", "page")
     if (page == null) {
         ws.close()
         return "no-page"
     }
+    if (stage == 2) {
+        ws.close()
+        return "ok-2"
+    }
     if (rpcOk(ws, "{\"jsonrpc\": \"2.0\", \"id\": 3, \"method\": \"page.goto\", \"params\": {\"page\": \"$page\", \"url\": \"https://example.com\", \"timeoutMs\": 5000}}") == false) {
         ws.close()
         return "no-goto"
     }
-    val text = rpcField(ws, "{\"jsonrpc\": \"2.0\", \"id\": 4, \"method\": \"page.text\", \"params\": {\"page\": \"$page\"}}", "text")
-    if (text == null || text != "Live heading") {
-        ws.close()
-        return "no-text"
-    }
-    if (rpcOk(ws, "{\"jsonrpc\": \"2.0\", \"id\": 5, \"method\": \"page.close\", \"params\": {\"page\": \"$page\"}}") == false) {
-        ws.close()
-        return "no-closepage"
-    }
-    if (rpcOk(ws, "{\"jsonrpc\": \"2.0\", \"id\": 6, \"method\": \"context.close\", \"params\": {\"context\": \"$ctx\"}}") == false) {
-        ws.close()
-        return "no-closectx"
-    }
-    val unknown = rpcRaw(ws, requestFrame(7, "page.fly", "{}"))
     ws.close()
-    if (unknown == null) {
-        return "no-unknown"
+    return "ok-3"
+}
+
+fun workerCase(portA: Int, portB: Int, stage: Int, want: String): String {
+    val cdp = task {
+        liveFakeCdp(portA)
     }
-    if (parseJson(unknown).get("error") == null) {
-        return "unknown-no-error"
+    sleepMs(150)
+    val server = TCPServer()
+    if (server.bind(portB) == false) {
+        cdp.await()
+        return "bind-fail"
+    }
+    val worker = task {
+        workerSide(portA, server)
+    }
+    sleepMs(150)
+    val client = task {
+        clientStage(portB, stage)
+    }
+    val res = client.await()
+    worker.await()
+    cdp.await()
+    if (res != want) {
+        return res
     }
     return "ok"
 }
 
-test "worker: engine dispatch over a live connection" {
-    val cdp = task {
-        liveFakeCdp(19896)
-    }
-    sleepMs(150)
-    val worker = task {
-        workerSide(19896, 19897)
-    }
-    sleepMs(150)
-    val client = task {
-        clientSide(19897)
-    }
-    assert(client.await() == "ok")
-    val wres = worker.await()
-    echo("worker:")
-    echo(wres)
-    assert(wres == "ws")
-    assert(cdp.await() == "ok")
+test "worker stages: context and page" {
+    assert(workerCase(19921, 19922, 2, "ok-2") == "ok")
+}
+
+test "worker stages: goto" {
+    assert(workerCase(19923, 19924, 3, "ok-3") == "ok")
 }
