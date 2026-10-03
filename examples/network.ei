@@ -1,15 +1,17 @@
 // Network observation: observe-only plugin registration (MVP).
 import { PluginRegistry, networkLoggerTopics } from ".browser.plugins.plugins"
-import { connect } from ".browser.browser"
+import { Browser, NoWorkerAvailable, UnknownContext } from ".browser.browser"
+import { Log } from "std.log"
+import { use } from "std.core"
 
 fun main() {
     val plugins = PluginRegistry()
-    plugins.use("NetworkLogger", networkLoggerTopics())
-    val browser = connect(["ws://browser-worker:8080"], 8)
-    val ctx = browser.newContext()
-    if (ctx == null) {
-        return
+    try {
+        use(Browser(["ws://browser-worker:8080"], 8)) { browser ->
+            val page = browser.newPage()
+            plugins.use("NetworkLogger", networkLoggerTopics())
+        }
+    } catch (e: NoWorkerAvailable | UnknownContext) {
+        Log.error(e) { "browser provisioning failed" }
     }
-    browser.closeContext(ctx)
-    browser.close()
 }

@@ -1,6 +1,7 @@
 // Reference scraping service (generic consumer, outside browser scope).
-// HTTP-first fallback + pool via Browser.connect + normalization in-app.
-import { connect } from ".browser.browser"
+// HTTP-first fallback + pool via Browser + normalization in-app.
+import { Browser, NoWorkerAvailable, UnknownContext } from ".browser.browser"
+import { Log } from "std.log"
 import { css } from ".browser.locator.locator"
 import { gotoCmd, textCmd } from ".browser.protocol.commands"
 import { httpGet } from ".browser.net.http"
@@ -16,19 +17,14 @@ fun main() {
         normalize(http.body)
         return
     }
-    val browser = connect(["ws://browser-worker:8080"], 8)
-    val ctx = browser.newContext()
-    if (ctx == null) {
-        return
+    val browser = Browser(["ws://browser-worker:8080"], 8)
+    try {
+        val page = browser.newPage()
+        val goto = gotoCmd(1, page.id, "https://shop.example.com", "load", 30000)
+        val text = textCmd(2, page.id, css(".product-detail"))
+        normalize("")
+    } catch (e: NoWorkerAvailable | UnknownContext) {
+        Log.error(e) { "browser provisioning failed" }
     }
-    val page = browser.newPage(ctx)
-    if (page == null) {
-        browser.closeContext(ctx)
-        return
-    }
-    val goto = gotoCmd(1, page, "https://shop.example.com", "load", 30000)
-    val text = textCmd(2, page, css(".product-detail"))
-    normalize("")
-    browser.closeContext(ctx)
     browser.close()
 }

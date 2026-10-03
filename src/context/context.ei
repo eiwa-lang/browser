@@ -1,23 +1,25 @@
 // BrowserContext handle (§6.2): isolated session owned by a Browser.
 
+import { Closeable } from "std.core"
 import { List } from "std.collections"
 import { Browser } from ".browser.browser"
+import { Page } from ".page.page"
 
-type BrowserContext(val browser: Browser, val id: String) {
+type BrowserContext(val browser: Browser, val id: String) : Closeable {
 
-    fun newPage(): String? {
-        return this.browser.newPage(this.id)
+    fun newPage(): Page {
+        return this.browser.newPage(this)
     }
 
-    fun pages(): List<String> {
-        return this.browser.pages(this.id)
+    fun pages(): List<Page> {
+        return this.browser.pages(this)
     }
 
     fun worker(): String? {
         return this.browser.workerOf(this.id)
     }
 
-    fun close(): Bool {
-        return this.browser.closeContext(this.id)
+    implement fun close(): Void {
+        this.browser.closeContext(this.id)
     }
 }

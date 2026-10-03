@@ -1,21 +1,17 @@
 // Basic usage: connect, handles, command frames, lifecycle.
-import { connect } from ".browser.browser"
+import { Browser, NoWorkerAvailable, UnknownContext } from ".browser.browser"
+import { Log } from "std.log"
 import { css } from ".browser.locator.locator"
 import { gotoCmd, textCmd } from ".browser.protocol.commands"
 
 fun main() {
-    val browser = connect(["ws://browser-worker:8080"], 8)
-    val ctx = browser.newContext()
-    if (ctx == null) {
-        return
+    try {
+        use(Browser(["ws://browser-worker:8080"], 8)) { browser ->
+            val page = browser.newPage()
+            val goto = gotoCmd(1, page.id, "https://example.com", "load", 30000)
+            val text = textCmd(2, page.id, css("h1"))
+        }
+    } catch (e: NoWorkerAvailable | UnknownContext) {
+        Log.error(e) { "browser provisioning failed" }
     }
-    val page = browser.newPage(ctx)
-    if (page == null) {
-        browser.closeContext(ctx)
-        return
-    }
-    val goto = gotoCmd(1, page, "https://example.com", "load", 30000)
-    val text = textCmd(2, page, css("h1"))
-    browser.closeContext(ctx)
-    browser.close()
 }

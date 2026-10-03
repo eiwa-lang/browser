@@ -1,6 +1,8 @@
 import { assert } from "std.core"
+import { List } from "std.collections"
 import { WorkerPool } from ".browser.pool"
-import { connect, launch } from ".browser.browser"
+import { Browser, NoWorkerAvailable, UnknownContext } from ".browser.browser"
+import { use } from "std.core"
 import { BrowserContext } from ".context.context"
 import { Page } from ".page.page"
 
@@ -21,63 +23,118 @@ test "browser: pool spreads round-robin and skips dead workers" {
 test "browser: empty pool picks nothing" {
     val pool = WorkerPool([])
     assert(pool.pick() == null)
-    val dead = connect([], 8)
-    assert(dead.newContext() == null)
+    val noWorkers: List<String> = []
+    val dead = Browser(noWorkers, 8)
+    try {
+        dead.newContext()
+        assert(false)
+    } catch (e: NoWorkerAvailable) {
+        assert(true)
+    }
 }
 
 test "browser: new contexts pin sticky workers" {
-    val b = connect(["ws://a:8080", "ws://b:8080"], 8)
-    val c1 = b.newContext()
-    val c2 = b.newContext()
-    assert(c1 == "ctx-1")
-    assert(c2 == "ctx-2")
-    assert(b.workerOf(c1!!) == "ws://a:8080")
-    assert(b.workerOf(c2!!) == "ws://b:8080")
+    val b = Browser(["ws://a:8080", "ws://b:8080"], 8)
+    val c1: BrowserContext = b.newContext()
+    val c2: BrowserContext = b.newContext()
+    assert(c1.id == "ctx-1")
+    assert(c2.id == "ctx-2")
+    assert(c1.worker() == "ws://a:8080")
+    assert(c2.worker() == "ws://b:8080")
     assert(b.contexts().size() == 2)
     assert(b.workerOf("ctx-9") == null)
+    b.close()
 }
 
 test "browser: pages live under their context and die with it" {
-    val b = connect(["ws://a:8080"], 8)
-    val ctx = b.newContext()!!
-    assert(b.newPage("ctx-9") == null)
+    val b = Browser(["ws://a:8080"], 8)
+    val other = Browser(["ws://a:8080"], 8)
+    val foreign = other.newContext()
+    try {
+        b.newPage(foreign)
+        assert(false)
+    } catch (e: UnknownContext) {
+        assert(true)
+    }
+    other.close()
+    val ctx = b.newContext()
     val p1 = b.newPage(ctx)
-    val p2 = b.newPage(ctx)
-    assert(p1 == "page-1")
-    assert(p2 == "page-2")
-    assert(b.pages(ctx).size() == 2)
-    assert(b.closePage(p1!!))
-    assert(b.pages(ctx).size() == 1)
-    assert(b.closeContext(ctx))
-    assert(b.pages(ctx).size() == 0)
+    val p2 = ctx.newPage()
+    assert(p1.id == "page-1")
+    assert(p2.id == "page-2")
+    assert(ctx.pages().size() == 2)
+    assert(b.closePage(p1.id))
+    assert(ctx.pages().size() == 1)
+    assert(b.closeContext(ctx.id))
+    assert(ctx.pages().size() == 0)
     assert(b.contexts().size() == 0)
-    assert(b.newPage(ctx) == null)
+    try {
+        b.newPage(ctx)
+        assert(false)
+    } catch (e: UnknownContext) {
+        assert(true)
+    }
+    b.close()
 }
 
 test "browser: handles delegate to the client" {
-    val b = connect(["ws://a:8080"], 8)
-    val ctx = BrowserContext(b, b.newContext()!!)
-    val p = ctx.newPage()!!
+    val b = Browser(["ws://a:8080"], 8)
+    val ctx = b.newContext()
+    val p = ctx.newPage()
     assert(ctx.pages().size() == 1)
     assert(ctx.worker() == "ws://a:8080")
-    val page = Page(b, p, ctx.id)
-    assert(page.close())
+    val same = Page(b, p.id, ctx.id)
+    same.close()
     assert(ctx.pages().size() == 0)
-    assert(ctx.close())
+    ctx.close()
+    assert(b.contexts().size() == 0)
+    b.close()
 }
 
 test "browser: close drains every context" {
-    val b = connect(["ws://a:8080"], 8)
+    val b = Browser(["ws://a:8080"], 8)
     b.newContext()
     b.newContext()
-    assert(b.close() == 2)
+    assert(b.contexts().size() == 2)
+    b.close()
     assert(b.contexts().size() == 0)
-    assert(b.close() == 0)
+    b.close()
+    assert(b.contexts().size() == 0)
 }
 
-test "browser: launch targets the local worker" {
-    val b = launch()
-    val ctx = b.newContext()!!
-    assert(b.workerOf(ctx) == "ws://localhost:8080")
-    assert(b.close() == 1)
+test "browser: constructor defaults to local worker" {
+    val b = Browser()
+    val ctx = b.newContext()
+    assert(ctx.worker() == "ws://localhost:8080")
+    b.close()
+    assert(b.contexts().size() == 0)
+}
+
+test "browser: headed request has nothing to route to" {
+    val b = Browser(headless = false)
+    try {
+        b.newContext()
+        assert(false)
+    } catch (e: NoWorkerAvailable) {
+        assert(true)
+    }
+}
+
+test "browser: newPage mints its own context by default" {
+    val b = Browser(["ws://a:8080"], 8)
+    val p = b.newPage()
+    assert(p.id == "page-1")
+    assert(b.contexts().size() == 1)
+    b.close()
+    assert(b.contexts().size() == 0)
+}
+
+test "browser: use closes everything at block end" {
+    val b = Browser(["ws://a:8080"], 8)
+    use(b) { browser ->
+        browser.newPage()
+        browser.newPage()
+        assert(browser.contexts().size() == 2)
+    }
+    assert(b.contexts().size() == 0)
 }

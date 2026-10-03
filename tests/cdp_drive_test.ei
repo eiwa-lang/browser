@@ -1,5 +1,5 @@
 import { assert } from "std.core"
-import { parseJson, Json } from "std.json"
+import { parseJson } from "std.json"
 import { sleepMs } from "std.time"
 import { TCPServer, Socket } from "std.net"
 import { buildFrame, wsRecv, writeAll } from ".browser.net.ws"

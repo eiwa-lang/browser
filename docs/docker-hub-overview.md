@@ -32,7 +32,7 @@ $ curl http://localhost:8080/health
 Point the client pool at the internal Service DNS (K8s) or container host:
 
 ```eiwa
-val browser = Browser.connect(
+val browser = Browser(
     workers: ["ws://browser-worker:8080"],
     poolSize: 8
 )

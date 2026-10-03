@@ -5,43 +5,58 @@
 // routing decisions are fully testable here.
 
 import { MutableList, MutableMap } from "std.collections"
+import { Closeable } from "std.core"
 import { WorkerPool } from ".browser.pool"
 import { ProxyRegistry } from ".browser.protocol.registry"
+import { BrowserContext } from ".context.context"
+import { Page } from ".page.page"
 
-type BrowserConfig(
-    val workers: List<String>,
-    val poolSize: Int = 8
-)
+type NoWorkerAvailable(val detail: String) : Throwable {
+    implement fun message(): String {
+        return this.detail
+    }
+}
+
+type UnknownContext(val context: String) : Throwable {
+    implement fun message(): String {
+        return "unknown context: " + this.context
+    }
+}
 
 type Browser(
-    val config: BrowserConfig,
-    val pool: WorkerPool,
-    val registry: ProxyRegistry,
-    val pinned: MutableMap<String, String> = MutableMap<String, String>(),
-    var nextContext: Int = 1,
+    val workers: List<String> = ["ws://localhost:8080"],
+    val poolSize: Int = 1,
+    val headless: Bool = true
+) : Closeable {
+    val pool: WorkerPool = WorkerPool(workers)
+    val registry: ProxyRegistry = ProxyRegistry()
+    val pinned: MutableMap<String, String> = MutableMap<String, String>()
+    var nextContext: Int = 1
     var nextPage: Int = 1
-) {
 
-    fun newContext(): String? {
+    fun newContext(): BrowserContext {
+        if (this.headless == false) {
+            return throw NoWorkerAvailable("headed browsers have no display in MVP")
+        }
         val url = this.pool.pick()
         if (url == null) {
-            return null
+            return throw NoWorkerAvailable("no worker available")
         }
         val id = "ctx-${this.nextContext}"
         this.nextContext = this.nextContext + 1
         this.pinned.put(id, url)
         if (this.registry.register(id, "browser")) {
-            return id
+            return BrowserContext(this, id)
         }
         this.pinned.remove(id)
-        return null
+        return throw NoWorkerAvailable("context registry refused")
     }
 
-    fun contexts(): List<String> {
-        val out: MutableList<String> = MutableList<String>()
+    fun contexts(): List<BrowserContext> {
+        val out: MutableList<BrowserContext> = MutableList<BrowserContext>()
         val pinned = this.pinned
         for (pinned) { entry ->
-            out.add(entry.key)
+            out.add(BrowserContext(this, entry.key))
         }
         return out.freeze()
     }
@@ -50,20 +65,30 @@ type Browser(
         return this.pinned.get(ctx)
     }
 
-    fun newPage(ctx: String): String? {
-        if (this.pinned.contains(ctx) == false) {
-            return null
+    fun newPage(ctx: BrowserContext? = null): Page {
+        val c: BrowserContext = if (ctx == null) { this.newContext() } else { ctx }
+        if (this.pinned.contains(c.id) == false) {
+            return throw UnknownContext(c.id)
         }
         val id = "page-${this.nextPage}"
         this.nextPage = this.nextPage + 1
-        if (this.registry.register(id, ctx)) {
-            return id
+        if (this.registry.register(id, c.id)) {
+            return Page(this, id, c.id)
         }
-        return null
+        // Unreachable with minted ids (register only rejects malformed
+        // ones); typed as provisioning failure.
+        return throw NoWorkerAvailable("page registry refused")
     }
 
-    fun pages(ctx: String): List<String> {
-        return this.registry.childrenOf(ctx)
+    fun pages(ctx: BrowserContext): List<Page> {
+        val out: MutableList<Page> = MutableList<Page>()
+        val ids = this.registry.childrenOf(ctx.id)
+        var i = 0
+        while (i < ids.size()) {
+            out.add(Page(this, ids.get(i), ctx.id))
+            i = i + 1
+        }
+        return out.freeze()
     }
 
     fun closePage(id: String): Bool {
@@ -76,25 +101,12 @@ type Browser(
         return unpinned || dropped
     }
 
-    fun close(): Int {
+    implement fun close(): Void {
         val live = this.contexts()
-        var n = 0
         var i = 0
         while (i < live.size()) {
-            if (this.closeContext(live.get(i))) {
-                n = n + 1
-            }
+            this.closeContext(live.get(i).id)
             i = i + 1
         }
-        return n
     }
-}
-
-fun connect(workers: List<String>, poolSize: Int): Browser {
-    val config = BrowserConfig(workers, poolSize)
-    return Browser(config, WorkerPool(workers), ProxyRegistry())
-}
-
-fun launch(): Browser {
-    return connect(["ws://localhost:8080"], 1)
 }

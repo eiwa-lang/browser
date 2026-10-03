@@ -1,10 +1,11 @@
 // Page handle (§6.3): a browser tab inside a context.
 
+import { Closeable } from "std.core"
 import { Browser } from ".browser.browser"
 
-type Page(val browser: Browser, val id: String, val context: String) {
+type Page(val browser: Browser, val id: String, val context: String) : Closeable {
 
-    fun close(): Bool {
-        return this.browser.closePage(this.id)
+    implement fun close(): Void {
+        this.browser.closePage(this.id)
     }
 }

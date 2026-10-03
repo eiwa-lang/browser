@@ -25,7 +25,7 @@ narrows after an early-return null check (redundant `!!` warns).
 ## Phase 2 — Chromium Engine (MVP)
 
 - [x] Client routing: `WorkerPool` round-robin, sticky pins, eviction
-- [x] `Browser.connect/launch`, `newContext/contexts/close` (§6.1)
+- [x] `Browser(workers, poolSize, headless)` constructor, `newContext/contexts/close` (§6.1)
 - [x] `BrowserContext` / `Page` handles + cascade close (§§6.2, 6.3)
 - [x] `ProxyRegistry.childrenOf` for `pages()`/`contexts()`
 - [x] Real WebSocket transport: pure-Eiwa RFC 6455 client (`net/ws.ei`)
@@ -101,12 +101,41 @@ type fails (`Unresolved property 'list'`; RED test saved).
       NUL — fixed in `eiwa-lang` `src/std/core.ei` via `memcpy`, same as
       the existing `String.slice`; `socket_binary_test.ei` green)
 - [x] Docker worker image, Engine + Chromium headless (§§28, 29)
-- [x] Client pool: `Browser.connect(workers, poolSize)`, round-robin,
+- [x] Client pool: `Browser(workers, poolSize)` constructor, round-robin,
       sticky contexts, fail-fast eviction (§§5.2, 30.2)
 - [x] K8s decision: manifests live in the consumer repo, not here
 - [ ] Headless-service DNS discovery (least-loaded) — post-MVP (§30.3)
 - [x] `examples/scraping-demo/` reference consumer validated (§44: all
       examples compile against real modules via `--module-path`)
+
+## Phase 9 — Fluent client (MVP remainder, see `docs/USAGE.md`)
+
+No bare imported funs: every command below is a method on its handle.
+Wire builders (`protocol/commands.ei`, `cookiesCmd`, `css`, …) stay
+internal. `WorkerClient` owns one persistent WS per worker URL, id
+counters and the pending-reply map; handles delegate to it.
+
+- [ ] `WorkerClient`: connect per worker, `initialize` handshake, send
+      frame over the pinned worker WS, await reply by id (§§24, 26)
+- [x] `newContext(): BrowserContext`, `newPage(ctx = null): Page` return
+      handles (§25); `contexts(): List<BrowserContext>`,
+      `pages(): List<Page>`; `ctx.newPage()` delegates
+- [ ] `Page`: `goto/reload/goBack/goForward` (§9)
+- [ ] `Page.locator(raw)` only constructor, auto-detect strategy (§7);
+      `Locator`: `click/fill/type/press/text/attribute/waitFor` (§§7, 8)
+- [ ] `Page`: `click/fill/type/press/text/content/attribute/evaluate/
+      waitFor/waitForUrl` (§§6.3, 8, 10)
+- [ ] `Page`: `onRequest/onResponse/onDownload` (implicit
+      `page.subscribe`, §18); `ObservedRequest/Response` payloads (§11)
+- [ ] `BrowserContext`: `cookies/addCookie/clearCookies/storageState`;
+      `newContext(storageState)` (§§13, 14); `Download.bytes()` (§15)
+- [ ] `Browser.use/unuse/subscribed` + `NetworkLogger` (§§20, 21, 48)
+- [ ] `setTimeout` on Browser/Context/Page + operation-level
+      `timeoutMs` (§34); `TimeoutConfig/resolveTimeout` go internal
+- [ ] `version()` / `isConnected()` (§6.1)
+- [ ] Remote cascade: `closeContext/closePage` send close frames, then
+      clear the local registry
+- [ ] Typed command errors (§33) thrown from replies (`data.code` map)
 
 ## Out of browser scope (separate scraper repo)
 
