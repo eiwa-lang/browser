@@ -4,11 +4,12 @@
 // nest). Managers own ids, the adapter (CdpConn) owns the wire.
 
 import { Mutex } from "std.thread"
+import { sleepMs, nowMillis } from "std.time"
 import { parseJson } from "std.json"
 import { Chromium } from ".browser.chromium.chromium"
 import { CdpConn, awaitEvent } from ".browser.chromium.connection"
 import { ContextManager, PageManager } from ".browser.engine.managers"
-import { createBrowserContextCmd, createTargetCtxCmd, disposeBrowserContextCmd, attachCmd, navigateCmd, evaluateCmd, closeTargetCmd, sessionCmd, parseBrowserContextCreated, parseTargetCreated, parseAttached, evaluateValue, cdpEventMethod, cdpSessionOf } from ".browser.chromium.cdp_commands"
+import { createBrowserContextCmd, createTargetCtxCmd, disposeBrowserContextCmd, attachCmd, navigateCmd, evaluateCmd, closeTargetCmd, sessionCmd, historyEntryCmd, parseHistoryEntry, locatorTextScript, locatorClickScript, locatorFillScript, locatorTypeScript, locatorAttrScript, parseBrowserContextCreated, parseTargetCreated, parseAttached, evaluateValue, cdpEventMethod, cdpSessionOf } from ".browser.chromium.cdp_commands"
 
 type Engine(
     val chromium: Chromium,
@@ -99,7 +100,60 @@ type Engine(
         if (navigated == null) {
             return false
         }
+        return this.awaitLoad(session, timeoutMs)
+    }
+
+    fun awaitLoad(session: String, timeoutMs: Int): Bool {
         return awaitEvent(this.conn, { raw -> cdpEventMethod(parseJson(raw)) == "Page.loadEventFired" && cdpSessionOf(parseJson(raw)) == session }, timeoutMs)
+    }
+
+    fun reload(page: String, timeoutMs: Int): Bool {
+        val out = this.lock.withLock({ this.reloadPage(page, timeoutMs) })
+        return out
+    }
+
+    fun reloadPage(page: String, timeoutMs: Int): Bool {
+        val binding = this.pages.binding(page)
+        if (binding == null) {
+            return false
+        }
+        val reloaded = this.conn.call({ callId -> sessionCmd(callId, binding.session, "Page.reload") }, 10000)
+        if (reloaded == null) {
+            return false
+        }
+        return this.awaitLoad(binding.session, timeoutMs)
+    }
+
+    fun goBack(page: String, timeoutMs: Int): Bool {
+        val out = this.lock.withLock({ this.travel(page, -1, timeoutMs) })
+        return out
+    }
+
+    fun goForward(page: String, timeoutMs: Int): Bool {
+        val out = this.lock.withLock({ this.travel(page, 1, timeoutMs) })
+        return out
+    }
+
+    fun travel(page: String, delta: Int, timeoutMs: Int): Bool {
+        val binding = this.pages.binding(page)
+        if (binding == null) {
+            return false
+        }
+        val session = binding.session
+        val raw = this.conn.call({ callId -> sessionCmd(callId, session, "Page.getNavigationHistory") }, 10000)
+        if (raw == null) {
+            return false
+        }
+        val entry = parseHistoryEntry(parseJson(raw), delta)
+        if (entry == null) {
+            return false
+        }
+        val target = entry!!
+        val gone = this.conn.call({ callId -> historyEntryCmd(callId, session, target) }, 10000)
+        if (gone == null) {
+            return false
+        }
+        return this.awaitLoad(session, timeoutMs)
     }
 
     fun text(page: String): String? {
@@ -140,6 +194,172 @@ type Engine(
         return value!!.asString()
     }
 
+    fun textByLocator(page: String, strategy: String, selector: String): String? {
+        val out = this.lock.withLock({ this.readLocatorText(page, strategy, selector) })
+        return out
+    }
+
+    fun readLocatorText(page: String, strategy: String, selector: String): String? {
+        val binding = this.pages.binding(page)
+        if (binding == null) {
+            return null
+        }
+        val script = locatorTextScript(strategy, selector)
+        if (script == null) {
+            return null
+        }
+        return this.readScript(binding.session, script)
+    }
+
+    fun click(page: String, strategy: String, selector: String): Bool {
+        val out = this.lock.withLock({ this.clickLocator(page, strategy, selector) })
+        return out
+    }
+
+    fun clickLocator(page: String, strategy: String, selector: String): Bool {
+        val binding = this.pages.binding(page)
+        if (binding == null) {
+            return false
+        }
+        val script = locatorClickScript(strategy, selector)
+        if (script == null) {
+            return false
+        }
+        val r = this.readScript(binding.session, script)
+        return r != null && r == "ok"
+    }
+
+    fun fill(page: String, strategy: String, selector: String, value: String): Bool {
+        val out = this.lock.withLock({ this.fillLocator(page, strategy, selector, value) })
+        return out
+    }
+
+    fun fillLocator(page: String, strategy: String, selector: String, value: String): Bool {
+        val binding = this.pages.binding(page)
+        if (binding == null) {
+            return false
+        }
+        val script = locatorFillScript(strategy, selector, value)
+        if (script == null) {
+            return false
+        }
+        val r = this.readScript(binding.session, script)
+        return r != null && r == "ok"
+    }
+
+    fun typeText(page: String, strategy: String, selector: String, value: String): Bool {
+        val out = this.lock.withLock({ this.typeLocator(page, strategy, selector, value) })
+        return out
+    }
+
+    fun typeLocator(page: String, strategy: String, selector: String, value: String): Bool {
+        val binding = this.pages.binding(page)
+        if (binding == null) {
+            return false
+        }
+        val script = locatorTypeScript(strategy, selector, value)
+        if (script == null) {
+            return false
+        }
+        val r = this.readScript(binding.session, script)
+        return r != null && r == "ok"
+    }
+
+    fun attribute(page: String, strategy: String, selector: String, name: String): String? {
+        val out = this.lock.withLock({ this.readAttribute(page, strategy, selector, name) })
+        return out
+    }
+
+    fun readAttribute(page: String, strategy: String, selector: String, name: String): String? {
+        val binding = this.pages.binding(page)
+        if (binding == null) {
+            return null
+        }
+        val script = locatorAttrScript(strategy, selector, name)
+        if (script == null) {
+            return null
+        }
+        return this.readScript(binding.session, script)
+    }
+
+    fun evaluate(page: String, script: String): String? {
+        val out = this.lock.withLock({ this.evalRaw(page, script) })
+        return out
+    }
+
+    fun evalRaw(page: String, script: String): String? {
+        val binding = this.pages.binding(page)
+        if (binding == null || script == "") {
+            return null
+        }
+        val raw = this.conn.call({ callId -> evaluateCmd(callId, binding.session, script) }, 10000)
+        if (raw == null) {
+            return null
+        }
+        val value = evaluateValue(parseJson(raw))
+        if (value == null) {
+            return null
+        }
+        return value!!.write()
+    }
+
+    fun waitFor(page: String, strategy: String, selector: String, timeoutMs: Int): Bool {
+        val out = this.lock.withLock({ this.pollLocator(page, strategy, selector, timeoutMs) })
+        return out
+    }
+
+    fun pollLocator(page: String, strategy: String, selector: String, timeoutMs: Int): Bool {
+        val binding = this.pages.binding(page)
+        if (binding == null) {
+            return false
+        }
+        val script = locatorWaitScript(strategy, selector)
+        if (script == null) {
+            return false
+        }
+        val code = script
+        val session = binding.session
+        val start = nowMillis()
+        while (nowMillis() - start < timeoutMs) {
+            val budget = timeoutMs - (nowMillis() - start)
+            val raw = this.conn.call({ callId -> evaluateCmd(callId, session, code) }, budget)
+            if (raw != null) {
+                val value = evaluateValue(parseJson(raw))
+                if (value != null && value!!.isString() && value!!.asString() == "found") {
+                    return true
+                }
+            }
+            sleepMs(100)
+        }
+        return false
+    }
+
+    fun waitForUrl(page: String, pattern: String, timeoutMs: Int): Bool {
+        val out = this.lock.withLock({ this.pollUrl(page, pattern, timeoutMs) })
+        return out
+    }
+
+    fun pollUrl(page: String, pattern: String, timeoutMs: Int): Bool {
+        val binding = this.pages.binding(page)
+        if (binding == null || pattern == "") {
+            return false
+        }
+        val session = binding.session
+        val start = nowMillis()
+        while (nowMillis() - start < timeoutMs) {
+            val budget = timeoutMs - (nowMillis() - start)
+            val raw = this.conn.call({ callId -> evaluateCmd(callId, session, "window.location.href") }, budget)
+            if (raw != null) {
+                val value = evaluateValue(parseJson(raw))
+                if (value != null && value!!.isString() && matchGlob(pattern, value!!.asString())) {
+                    return true
+                }
+            }
+            sleepMs(100)
+        }
+        return false
+    }
+
     fun closePage(page: String): Bool {
         val out = this.lock.withLock({ this.dropPage(page) })
         return out
@@ -172,4 +392,58 @@ type Engine(
         this.conn.call({ callId -> disposeBrowserContextCmd(callId, cdpCtx) }, 10000)
         return this.contexts.drop(ctx)
     }
+}
+
+fun matchGlob(pattern: String, text: String): Bool {
+    return matchGlobAt(pattern, 0, text, 0)
+}
+
+fun matchGlobAt(p: String, pi: Int, t: String, ti: Int): Bool {
+    var i = pi
+    var j = ti
+    while (i < p.length) {
+        val c = p.substring(i, i + 1)
+        if (c == "*") {
+            if (i + 1 < p.length && p.substring(i + 1, i + 2) == "*") {
+                var ni = i + 2
+                while (ni < p.length && p.substring(ni, ni + 1) == "*") {
+                    ni = ni + 1
+                }
+                if (ni >= p.length) {
+                    return true
+                }
+                var k = j
+                while (k <= t.length) {
+                    if (matchGlobAt(p, ni, t, k)) {
+                        return true
+                    }
+                    k = k + 1
+                }
+                return false
+            }
+            var k = j
+            while (true) {
+                if (matchGlobAt(p, i + 1, t, k)) {
+                    return true
+                }
+                if (k >= t.length || t.substring(k, k + 1) == "/") {
+                    return false
+                }
+                k = k + 1
+            }
+        }
+        if (j >= t.length) {
+            return false
+        }
+        if (c == "?") {
+            if (t.substring(j, j + 1) == "/") {
+                return false
+            }
+        } else if (c != t.substring(j, j + 1)) {
+            return false
+        }
+        i = i + 1
+        j = j + 1
+    }
+    return j >= t.length
 }

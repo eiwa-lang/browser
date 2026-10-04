@@ -1,5 +1,7 @@
 import { assert } from "std.core"
 import { parseJson } from "std.json"
+import { Browser } from ".browser.browser"
+import { matchGlob } from ".browser.engine.engine"
 import { css, xpath, textSelector, roleSelector, parseLocator } from ".browser.locator.locator"
 import { TimeoutConfig, builtinTimeout, resolveTimeout } from ".browser.timeouts"
 import { validWaitUntil, gotoCmd, reloadCmd, goBackCmd, clickCmd, fillCmd, pressCmd, textCmd, contentCmd, attributeCmd, waitForCmd, waitForUrlCmd, evaluateCmd } from ".browser.protocol.commands"
@@ -95,4 +97,33 @@ test "automation: waits and evaluate" {
     assert(evaluateCmd(10, "page-7", "") == null)
     assert(reloadCmd(11, "page-7") != null)
     assert(goBackCmd(12, "") == null)
+}
+
+test "automation: page locator binds strategy and page" {
+    val browser = Browser(["ws://127.0.0.1:19959"], 1)
+    val ctx = browser.newContext()
+    val pg = ctx.newPage()
+    val byCss = pg.locator("h1")
+    assert(byCss.strategy == "css")
+    assert(byCss.selector == "h1")
+    assert(byCss.page!!.id == pg.id)
+    assert(pg.locator("//h1").strategy == "xpath")
+    assert(pg.locator("text=Buy").strategy == "text")
+    assert(pg.locator("role=button").strategy == "role")
+    browser.close()
+}
+
+test "automation: unbound locator has no text" {
+    assert(parseLocator("h1").text() == null)
+}
+
+// Regression: engine also defines `evaluateCmd`; the explicit import above must win regardless of order.
+test "automation: glob matching" {
+    assert(matchGlob("**/result/**", "https://shop.example/result/1"))
+    assert(matchGlob("**/result/**", "https://shop.example/other") == false)
+    assert(matchGlob("https://a.example/*", "https://a.example/x"))
+    assert(matchGlob("https://a.example/*", "https://a.example/x/y") == false)
+    assert(matchGlob("https://a.example/**", "https://a.example/x/y"))
+    assert(matchGlob("https://a.example/exact", "https://a.example/exact"))
+    assert(matchGlob("https://a.example/exact", "https://a.example/other") == false)
 }

@@ -48,8 +48,30 @@ fun liveSession(sock: Socket): String {
                     } else if (name == "Page.navigate") {
                         writeAll(sock, buildFrame(1, liveReply(num, ["frameId" of "F1"].toJson()), null))
                         writeAll(sock, buildFrame(1, "{\"method\": \"Page.loadEventFired\", \"params\": {}, \"sessionId\": \"S1\"}", null))
+                    } else if (name == "Page.reload") {
+                        writeAll(sock, buildFrame(1, liveReply(num, "{}"), null))
+                        writeAll(sock, buildFrame(1, "{\"method\": \"Page.loadEventFired\", \"params\": {}, \"sessionId\": \"S1\"}", null))
+                    } else if (name == "Page.getNavigationHistory") {
+                        writeAll(sock, buildFrame(1, liveReply(num, "{\"currentIndex\": 1, \"entries\": [{\"id\": 101}, {\"id\": 102}, {\"id\": 103}]}"), null))
+                    } else if (name == "Page.navigateToHistoryEntry") {
+                        writeAll(sock, buildFrame(1, liveReply(num, "{}"), null))
+                        writeAll(sock, buildFrame(1, "{\"method\": \"Page.loadEventFired\", \"params\": {}, \"sessionId\": \"S1\"}", null))
                     } else if (name == "Runtime.evaluate") {
-                        writeAll(sock, buildFrame(1, liveReply(num, "{\"result\": {\"type\": \"string\", \"value\": \"Live heading\"}}"), null))
+                        if (f.payload.indexOf("getBoundingClientRect") >= 0) {
+                            writeAll(sock, buildFrame(1, liveReply(num, "{\"result\": {\"type\": \"string\", \"value\": \"found\"}}"), null))
+                        } else if (f.payload.indexOf("window.location.href") >= 0) {
+                            writeAll(sock, buildFrame(1, liveReply(num, "{\"result\": {\"type\": \"string\", \"value\": \"https://shop.example/result/1\"}}"), null))
+                        } else if (f.payload.indexOf("el.click") >= 0 || f.payload.indexOf("el.value") >= 0) {
+                            writeAll(sock, buildFrame(1, liveReply(num, "{\"result\": {\"type\": \"string\", \"value\": \"ok\"}}"), null))
+                        } else if (f.payload.indexOf("getAttribute") >= 0) {
+                            writeAll(sock, buildFrame(1, liveReply(num, "{\"result\": {\"type\": \"string\", \"value\": \"A\"}}"), null))
+                        } else if (f.payload.indexOf("outerHTML") >= 0) {
+                            writeAll(sock, buildFrame(1, liveReply(num, "{\"result\": {\"type\": \"string\", \"value\": \"<h1>H</h1>\"}}"), null))
+                        } else if (f.payload.indexOf("() => 42") >= 0) {
+                            writeAll(sock, buildFrame(1, liveReply(num, "{\"result\": {\"type\": \"number\", \"value\": 42}}"), null))
+                        } else {
+                            writeAll(sock, buildFrame(1, liveReply(num, "{\"result\": {\"type\": \"string\", \"value\": \"Live heading\"}}"), null))
+                        }
                     } else {
                         writeAll(sock, buildFrame(1, liveReply(num, "{}"), null))
                     }
@@ -207,8 +229,72 @@ fun clientStage(portB: Int, stage: Int): String {
         ws.close()
         return "no-goto"
     }
+    if (stage == 3) {
+        ws.close()
+        return "ok-3"
+    }
+    if (rpcOk(ws, "{\"jsonrpc\": \"2.0\", \"id\": 4, \"method\": \"page.reload\", \"params\": {\"page\": \"$page\", \"timeoutMs\": 5000}}") == false) {
+        ws.close()
+        return "no-reload"
+    }
+    if (rpcOk(ws, "{\"jsonrpc\": \"2.0\", \"id\": 5, \"method\": \"page.goBack\", \"params\": {\"page\": \"$page\", \"timeoutMs\": 5000}}") == false) {
+        ws.close()
+        return "no-back"
+    }
+    if (rpcOk(ws, "{\"jsonrpc\": \"2.0\", \"id\": 6, \"method\": \"page.goForward\", \"params\": {\"page\": \"$page\", \"timeoutMs\": 5000}}") == false) {
+        ws.close()
+        return "no-forward"
+    }
+    if (stage == 4) {
+        ws.close()
+        return "ok-4"
+    }
+    if (rpcOk(ws, "{\"jsonrpc\": \"2.0\", \"id\": 7, \"method\": \"page.text\", \"params\": {\"page\": \"$page\"}}") == false) {
+        ws.close()
+        return "no-text"
+    }
+    if (rpcOk(ws, "{\"jsonrpc\": \"2.0\", \"id\": 8, \"method\": \"page.text\", \"params\": {\"page\": \"$page\", \"locator\": {\"strategy\": \"css\", \"selector\": \"h1\"}}}") == false) {
+        ws.close()
+        return "no-scoped-text"
+    }
+    if (stage == 5) {
+        ws.close()
+        return "ok-5"
+    }
+    if (rpcOk(ws, "{\"jsonrpc\": \"2.0\", \"id\": 9, \"method\": \"page.click\", \"params\": {\"page\": \"$page\", \"locator\": {\"strategy\": \"css\", \"selector\": \"#go\"}}}") == false) {
+        ws.close()
+        return "no-click"
+    }
+    if (rpcOk(ws, "{\"jsonrpc\": \"2.0\", \"id\": 10, \"method\": \"page.fill\", \"params\": {\"page\": \"$page\", \"locator\": {\"strategy\": \"css\", \"selector\": \"#q\"}, \"value\": \"hi\"}}") == false) {
+        ws.close()
+        return "no-fill"
+    }
+    if (rpcField(ws, "{\"jsonrpc\": \"2.0\", \"id\": 11, \"method\": \"page.attribute\", \"params\": {\"page\": \"$page\", \"locator\": {\"strategy\": \"css\", \"selector\": \"a\"}, \"name\": \"href\"}}", "value") != "A") {
+        ws.close()
+        return "no-attr"
+    }
+    if (rpcField(ws, "{\"jsonrpc\": \"2.0\", \"id\": 12, \"method\": \"page.content\", \"params\": {\"page\": \"$page\"}}", "html") != "<h1>H</h1>") {
+        ws.close()
+        return "no-content"
+    }
+    if (rpcOk(ws, "{\"jsonrpc\": \"2.0\", \"id\": 13, \"method\": \"page.evaluate\", \"params\": {\"page\": \"$page\", \"script\": \"() => 42\"}}") == false) {
+        ws.close()
+        return "no-eval"
+    }
+    if (stage == 6) {
+        ws.close()
+        return "ok-6"
+    }
+    if (rpcOk(ws, "{\"jsonrpc\": \"2.0\", \"id\": 14, \"method\": \"page.waitFor\", \"params\": {\"page\": \"$page\", \"locator\": {\"strategy\": \"css\", \"selector\": \".product-detail\"}, \"timeoutMs\": 5000}}") == false) {
+        ws.close()
+        return "no-wait"
+    }
+    if (rpcOk(ws, "{\"jsonrpc\": \"2.0\", \"id\": 15, \"method\": \"page.waitForUrl\", \"params\": {\"page\": \"$page\", \"pattern\": \"**/result/**\", \"timeoutMs\": 5000}}") == false) {
+        ws.close()
+        return "no-wait-url"
+    }
     ws.close()
-    return "ok-3"
+    return "ok-7"
 }
 
 fun workerCase(portA: Int, portB: Int, stage: Int, want: String): String {
@@ -243,4 +329,20 @@ test "worker stages: context and page" {
 
 test "worker stages: goto" {
     assert(workerCase(19923, 19924, 3, "ok-3") == "ok")
+}
+
+test "worker stages: reload and history" {
+    assert(workerCase(19925, 19926, 4, "ok-4") == "ok")
+}
+
+test "worker stages: text" {
+    assert(workerCase(19927, 19928, 5, "ok-5") == "ok")
+}
+
+test "worker stages: actions and reading" {
+    assert(workerCase(19929, 19930, 6, "ok-6") == "ok")
+}
+
+test "worker stages: waits" {
+    assert(workerCase(19935, 19936, 7, "ok-7") == "ok")
 }

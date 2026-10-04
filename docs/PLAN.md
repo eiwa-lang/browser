@@ -115,16 +115,25 @@ Wire builders (`protocol/commands.ei`, `cookiesCmd`, `css`, …) stay
 internal. `WorkerClient` owns one persistent WS per worker URL, id
 counters and the pending-reply map; handles delegate to it.
 
-- [ ] `WorkerClient`: connect per worker, `initialize` handshake, send
+- [x] `WorkerClient`: connect per worker, `initialize` handshake, send
       frame over the pinned worker WS, await reply by id (§§24, 26)
 - [x] `newContext(): BrowserContext`, `newPage(ctx = null): Page` return
       handles (§25); `contexts(): List<BrowserContext>`,
       `pages(): List<Page>`; `ctx.newPage()` delegates
-- [ ] `Page`: `goto/reload/goBack/goForward` (§9)
-- [ ] `Page.locator(raw)` only constructor, auto-detect strategy (§7);
-      `Locator`: `click/fill/type/press/text/attribute/waitFor` (§§7, 8)
-- [ ] `Page`: `click/fill/type/press/text/content/attribute/evaluate/
-      waitFor/waitForUrl` (§§6.3, 8, 10)
+- [x] `Page.goto(url, waitUntil, timeoutMs)` over the pinned worker:
+      lazy `WorkerClient` per URL, local ids map to worker ids on first
+      command, `close()` drains sockets (§9)
+- [x] `Page.reload/goBack/goForward`: CDP `Page.reload` + navigation
+      history travel through Engine and dispatch (§9)
+- [x] `Page.locator(raw)` only constructor, auto-detect strategy (§7);
+      `Locator.text()` + `Page.text(loc?)` via locator-scoped
+      `Runtime.evaluate` (args as JSON literal, no manual escaping)
+- [x] `Locator`/`Page`: `click/fill/typeText/attribute` + `Page.content`
+      and `Page.evaluate` (JSON value) through Engine and dispatch
+      (§§6.3, 7, 10); `type` is an Eiwa keyword, method is `typeText`
+- [x] `Page.waitFor(selector)/waitForUrl(pattern)` + `Locator.waitFor`
+      (engine-side polling, visibility via rect, `**`/`*`/`?` globs,
+      server-side timeouts as `TIMEOUT`) (§8)
 - [ ] `Page`: `onRequest/onResponse/onDownload` (implicit
       `page.subscribe`, §18); `ObservedRequest/Response` payloads (§11)
 - [ ] `BrowserContext`: `cookies/addCookie/clearCookies/storageState`;

@@ -27,8 +27,8 @@ fun main() {
         // Round-robin per newContext, sticky afterwards (§30.2).
         use(Browser(["ws://browser-worker:8080"], 8)) { browser ->
             val page = browser.newPage()            // private context by default
-            page.goto("https://example.com")        // [target]
-            val title = page.locator("h1").text()   // [target]
+            page.goto("https://example.com")
+            val title = page.locator("h1").text()
             Log.info { "headline: ${title}" }
         }
     } catch (e: NoWorkerAvailable | UnknownContext) {
@@ -62,13 +62,13 @@ All three handles implement `Closeable`; prefer `use` over manual
 
 ## Navigation
 
-Navigation runs on the page, over its pinned worker [target]:
+Navigation runs on the page, over its pinned worker:
 
 | Method (Page) | Params | Description |
 |---------------|--------|-------------|
 | `goto` | `url, waitUntil = "load", timeoutMs = 30000` | Navigate; `waitUntil`: `commit`, `domcontentloaded`, `load`, `networkidle` |
-| `reload` | — | Reload current page |
-| `goBack` / `goForward` | — | History travel |
+| `reload` | `timeoutMs = 30000` | Reload current page |
+| `goBack` / `goForward` | `timeoutMs = 30000` | History travel |
 
 ```eiwa
 page.goto("https://example.com")
@@ -95,14 +95,14 @@ page.locator("role=button").click()
 ## Actions and Reading
 
 Element actions run on the locator (auto-wait per §8); page-level
-shortcuts take the locator explicitly [target]:
+shortcuts take the locator explicitly:
 
 | Method | Params | Description |
 |--------|--------|-------------|
 | `click` | `locator` / — | Click after auto-wait |
-| `fill` | `locator, value` / `value` | Fill input |
-| `type` | `locator, value` / `value` | Type keystrokes |
-| `press` | `locator, key` / `key` | Press key |
+| `fill` | `locator, value` / `value` | Fill input (replace + `input`/`change`) |
+| `typeText` | `locator, value` / `value` | Type keystrokes (append + `input`); `type` is an Eiwa keyword |
+| `press` [target] | `locator, key` / `key` | Press key (needs CDP Input) |
 | `text` | `locator` / — | Visible text |
 | `content` | — | Full HTML (`Page` only) |
 | `attribute` | `locator, name` / `name` | Attribute value |
@@ -249,8 +249,8 @@ fun searchProduct(sku: String): String {
     try {
         use(Browser(["ws://browser-worker:8080"], 8)) { browser ->
             val page = browser.newPage()
-            page.goto("https://shop.example.com")        // [target]
-            return page.locator(".price").text()         // [target]
+            page.goto("https://shop.example.com")
+            return page.locator(".price").text()
         }
     } catch (e: NoWorkerAvailable | UnknownContext) {
         Log.error(e) { "browser provisioning failed" }

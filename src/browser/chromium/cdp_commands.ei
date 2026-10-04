@@ -4,7 +4,7 @@
 // routing per `sessionId`. Shapes follow the DevTools protocol.
 
 import { MutableMap } from "std.collections"
-import { JsonValue, jsonObject, jsonString, jsonBool } from "std.json"
+import { JsonValue, jsonObject, jsonString, jsonBool, jsonNumber } from "std.json"
 
 fun cdpRequest(id: Int, method: String, params: String): String {
     return "{\"id\": $id, \"method\": \"$method\", \"params\": $params}"
@@ -89,6 +89,99 @@ fun sessionCmd(id: Int, session: String, method: String): String? {
         return null
     }
     return cdpRequestSession(id, session, method, "{}")
+}
+
+fun locatorFindChain(): String {
+    return "let el = null; if (s.strategy === \"css\") { el = document.querySelector(s.selector); } else if (s.strategy === \"xpath\") { el = document.evaluate(s.selector, document, null, 9, null).singleNodeValue; } else if (s.strategy === \"text\") { const v = s.selector; const q = v.indexOf('\"') < 0 ? '\"' + v + '\"' : (v.indexOf(\"'\") < 0 ? \"'\" + v + \"'\" : \"concat('\" + v.split(\"'\").join(\"', \\\"'\\\", '\") + \"')\"); el = document.evaluate(\"//*[contains(normalize-space(), \" + q + \")]\", document, null, 9, null).singleNodeValue; } else if (s.strategy === \"role\") { el = document.querySelector('[role=\"' + s.selector.split('\"').join('\\\"') + '\"]'); }"
+}
+
+fun locatorArgs(strategy: String, selector: String): MutableMap<String, JsonValue> {
+    val args = MutableMap<String, JsonValue>()
+    args.put("strategy", jsonString(strategy))
+    args.put("selector", jsonString(selector))
+    return args
+}
+
+fun locatorTextScript(strategy: String, selector: String): String? {
+    if (strategy == "" || selector == "") {
+        return null
+    }
+    return "((s) => {" + locatorFindChain() + " return el ? el.innerText : null;})(" + jsonObject(locatorArgs(strategy, selector).freeze()).write() + ")"
+}
+
+fun locatorClickScript(strategy: String, selector: String): String? {
+    if (strategy == "" || selector == "") {
+        return null
+    }
+    return "((s) => {" + locatorFindChain() + " if (!el) return null; el.click(); return \"ok\";})(" + jsonObject(locatorArgs(strategy, selector).freeze()).write() + ")"
+}
+
+fun locatorFillScript(strategy: String, selector: String, value: String): String? {
+    if (strategy == "" || selector == "") {
+        return null
+    }
+    val args = locatorArgs(strategy, selector)
+    args.put("value", jsonString(value))
+    return "((s) => {" + locatorFindChain() + " if (!el) return null; el.focus(); el.value = s.value; el.dispatchEvent(new Event(\"input\", {bubbles: true})); el.dispatchEvent(new Event(\"change\", {bubbles: true})); return \"ok\";})(" + jsonObject(args.freeze()).write() + ")"
+}
+
+fun locatorTypeScript(strategy: String, selector: String, value: String): String? {
+    if (strategy == "" || selector == "") {
+        return null
+    }
+    val args = locatorArgs(strategy, selector)
+    args.put("value", jsonString(value))
+    return "((s) => {" + locatorFindChain() + " if (!el) return null; el.focus(); el.value = (el.value || \"\") + s.value; el.dispatchEvent(new Event(\"input\", {bubbles: true})); return \"ok\";})(" + jsonObject(args.freeze()).write() + ")"
+}
+
+fun locatorAttrScript(strategy: String, selector: String, name: String): String? {
+    if (strategy == "" || selector == "" || name == "") {
+        return null
+    }
+    val args = locatorArgs(strategy, selector)
+    args.put("name", jsonString(name))
+    return "((s) => {" + locatorFindChain() + " if (!el) return null; return el.getAttribute(s.name);})(" + jsonObject(args.freeze()).write() + ")"
+}
+
+fun locatorWaitScript(strategy: String, selector: String): String? {
+    if (strategy == "" || selector == "") {
+        return null
+    }
+    return "((s) => {" + locatorFindChain() + " if (!el) return null; const r = el.getBoundingClientRect(); return (r.width > 0 && r.height > 0) ? \"found\" : null;})(" + jsonObject(locatorArgs(strategy, selector).freeze()).write() + ")"
+}
+
+fun historyEntryCmd(id: Int, session: String, entryId: Int): String? {
+    if (session == "" || entryId <= 0) {
+        return null
+    }
+    val params = MutableMap<String, JsonValue>()
+    params.put("entryId", jsonNumber(entryId.toDouble()))
+    return cdpRequestSession(id, session, "Page.navigateToHistoryEntry", jsonObject(params.freeze()).write())
+}
+
+fun parseHistoryEntry(reply: JsonValue, delta: Int): Int? {
+    val result = reply.get("result")
+    if (result == null) {
+        return null
+    }
+    val idxVal = result!!.get("currentIndex")
+    val entriesVal = result!!.get("entries")
+    if (idxVal == null || entriesVal == null) {
+        return null
+    }
+    if (idxVal!!.isNumber() == false || entriesVal!!.isArray() == false) {
+        return null
+    }
+    val want = idxVal!!.asNumber().toInt() + delta
+    val entries = entriesVal!!.asArray()
+    if (want < 0 || want >= entries.size()) {
+        return null
+    }
+    val idVal = entries.get(want).get("id")
+    if (idVal == null || idVal!!.isNumber() == false) {
+        return null
+    }
+    return idVal!!.asNumber().toInt()
 }
 
 type CdpSession(val target: String, val session: String)

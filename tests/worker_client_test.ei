@@ -1,0 +1,109 @@
+import { assert } from "std.core"
+import { parseJson } from "std.json"
+import { sleepMs } from "std.time"
+import { TCPServer } from "std.net"
+import { buildFrame, wsRecv, writeAll } from ".browser.net.ws"
+import { readHttpRequest, answerHandshake } from ".browser.net.ws_server"
+import { notifyFrame } from ".browser.protocol.envelope"
+import { WorkerClient, workerConnect } from ".browser.client"
+
+// Scripted fake worker: initialize handshake, one interleaved
+// notification before the goto reply, error for page.boom.
+fun fakeClientWorker(port: Int): String {
+    val server = TCPServer()
+    if (server.bind(port) == false) {
+        return "bind-fail"
+    }
+    val conn = server.accept()
+    if (conn == null) {
+        server.close()
+        return "accept-fail"
+    }
+    val head = readHttpRequest(conn)
+    if (head == null || answerHandshake(conn, head) == false) {
+        conn.close()
+        server.close()
+        return "handshake-fail"
+    }
+    var served = 0
+    while (served < 3) {
+        val f = wsRecv(conn)
+        if (f == null || f.opcode == 8) {
+            conn.close()
+            server.close()
+            return "closed-early"
+        }
+        if (f.opcode == 1 || f.opcode == 2) {
+            val msg = parseJson(f.payload)
+            val idVal = msg.get("id")
+            if (idVal != null) {
+                val id = idVal.write()
+                val methodVal = msg.get("method")
+                val method = if (methodVal != null) { methodVal.asString() } else { "" }
+                if (method == "initialize") {
+                    writeAll(conn, buildFrame(1, "{\"jsonrpc\": \"2.0\", \"id\": $id, \"result\": {\"protocol\": \"eiwa-browser\", \"version\": \"1.0\", \"capabilities\": [\"browser\"]}}", null))
+                } else if (method == "page.goto") {
+                    writeAll(conn, buildFrame(1, notifyFrame("page.request", "{\"page\": \"page-1\", \"request\": \"req-1\"}"), null))
+                    writeAll(conn, buildFrame(1, "{\"jsonrpc\": \"2.0\", \"id\": $id, \"result\": {\"url\": \"https://example.com\"}}", null))
+                } else {
+                    writeAll(conn, buildFrame(1, "{\"jsonrpc\": \"2.0\", \"id\": $id, \"error\": {\"code\": -32601, \"message\": \"unknown\", \"data\": {\"code\": \"UNKNOWN\", \"recoverable\": false}}}", null))
+                }
+                served = served + 1
+            }
+        }
+    }
+    conn.close()
+    server.close()
+    return "ok"
+}
+
+fun clientCase(port: Int): WorkerClient? {
+    val worker = task {
+        fakeClientWorker(port)
+    }
+    sleepMs(150)
+    val client = workerConnect("ws://127.0.0.1:$port/")
+    if (client == null) {
+        worker.await()
+        return null
+    }
+    return client
+}
+
+test "client: connect runs initialize handshake" {
+    val client = clientCase(19931)
+    assert(client != null)
+    assert(client!!.version() == "1.0")
+    client!!.close()
+}
+
+test "client: call awaits reply by id" {
+    val client = clientCase(19932)
+    assert(client != null)
+    val res = client!!.call("page.goto", "{\"page\": \"page-1\", \"url\": \"https://example.com\"}")
+    assert(res != null)
+    assert(parseJson(res!!).get("url")!!.asString() == "https://example.com")
+    client!!.close()
+}
+
+test "client: call skips interleaved notifications" {
+    val client = clientCase(19933)
+    assert(client != null)
+    // The fake sends page.request before the goto result; call must
+    // still resolve the matching id.
+    val res = client!!.call("page.goto", "{\"page\": \"page-1\", \"url\": \"https://example.com\"}")
+    assert(res != null)
+    assert(parseJson(res!!).get("url") != null)
+    client!!.close()
+}
+
+test "client: error reply returns null" {
+    val client = clientCase(19934)
+    assert(client != null)
+    // initialize + goto consume two exchanges; boom hits the error path.
+    client!!.call("page.goto", "{\"page\": \"page-1\", \"url\": \"https://example.com\"}")
+    val res = client!!.call("page.boom", "{\"page\": \"page-1\"}")
+    assert(res == null)
+    client!!.close()
+}
+

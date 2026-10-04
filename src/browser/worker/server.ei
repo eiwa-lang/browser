@@ -8,10 +8,11 @@ import { Socket, TCPServer } from "std.net"
 import { MutableList, MutableMap } from "std.collections"
 import { StackTask } from "std.coroutines"
 import { JsonValue, jsonObject, jsonString } from "std.json"
+import { JsonRpc } from "std.jsonrpc"
 import { wsRecv, buildFrame, writeAll } from ".browser.net.ws"
 import { readHttpRequest, answerHandshake } from ".browser.net.ws_server"
 import { parseFrame, isNotification, resultFrame, errorFrame } from ".browser.protocol.envelope"
-import { BrowserError } from ".browser.protocol.errors"
+import { BrowserError, timeoutError } from ".browser.protocol.errors"
 import { dispatch, healthResponse } from ".browser.protocol.dispatch"
 import { Engine } from ".browser.engine.engine"
 
@@ -136,6 +137,18 @@ fun effTimeout(v: Int): Int {
     return v
 }
 
+fun locatorParam(rpc: JsonRpc, key: String): String {
+    val loc = rpc.argument("locator")
+    if (loc == null) {
+        return ""
+    }
+    val v = loc!!.get(key)
+    if (v == null || v!!.isString() == false) {
+        return ""
+    }
+    return v!!.asString()
+}
+
 fun engineDispatch(engine: Engine, raw: String): String {
     if (isNotification(raw)) {
         return ""
@@ -161,12 +174,85 @@ fun engineDispatch(engine: Engine, raw: String): String {
         }
         return engineFailed(rpc.id, "navigation failed")
     }
+    if (rpc.method == "page.reload") {
+        if (engine.reload(rpc.argumentString("page"), effTimeout(rpc.argumentInt("timeoutMs")))) {
+            return okResult(rpc.id)
+        }
+        return engineFailed(rpc.id, "reload failed")
+    }
+    if (rpc.method == "page.goBack") {
+        if (engine.goBack(rpc.argumentString("page"), effTimeout(rpc.argumentInt("timeoutMs")))) {
+            return okResult(rpc.id)
+        }
+        return engineFailed(rpc.id, "history travel failed")
+    }
+    if (rpc.method == "page.goForward") {
+        if (engine.goForward(rpc.argumentString("page"), effTimeout(rpc.argumentInt("timeoutMs")))) {
+            return okResult(rpc.id)
+        }
+        return engineFailed(rpc.id, "history travel failed")
+    }
     if (rpc.method == "page.text") {
-        val text = engine.text(rpc.argumentString("page"))
+        val pageArg = rpc.argumentString("page")
+        val locArg = rpc.argument("locator")
+        var text: String? = null
+        if (locArg != null) {
+            val st = locArg!!.get("strategy")
+            val se = locArg!!.get("selector")
+            if (st != null && se != null && st!!.isString() && se!!.isString()) {
+                text = engine.textByLocator(pageArg, st!!.asString(), se!!.asString())
+            }
+        } else {
+            text = engine.text(pageArg)
+        }
         if (text == null) {
             return engineFailed(rpc.id, "unknown page")
         }
-        return strResult(rpc.id, "text", text)
+        return strResult(rpc.id, "text", text!!)
+    }
+    if (rpc.method == "page.click") {
+        if (engine.click(rpc.argumentString("page"), locatorParam(rpc, "strategy"), locatorParam(rpc, "selector"))) {
+            return okResult(rpc.id)
+        }
+        return engineFailed(rpc.id, "click failed")
+    }
+    if (rpc.method == "page.fill") {
+        if (engine.fill(rpc.argumentString("page"), locatorParam(rpc, "strategy"), locatorParam(rpc, "selector"), rpc.argumentString("value"))) {
+            return okResult(rpc.id)
+        }
+        return engineFailed(rpc.id, "fill failed")
+    }
+    if (rpc.method == "page.typeText") {
+        if (engine.typeText(rpc.argumentString("page"), locatorParam(rpc, "strategy"), locatorParam(rpc, "selector"), rpc.argumentString("value"))) {
+            return okResult(rpc.id)
+        }
+        return engineFailed(rpc.id, "type failed")
+    }
+    if (rpc.method == "page.attribute") {
+        val attr = engine.attribute(rpc.argumentString("page"), locatorParam(rpc, "strategy"), locatorParam(rpc, "selector"), rpc.argumentString("name"))
+        if (attr == null) {
+            return engineFailed(rpc.id, "unknown page")
+        }
+        return strResult(rpc.id, "value", attr)
+    }
+    if (rpc.method == "page.evaluate") {
+        val out = engine.evaluate(rpc.argumentString("page"), rpc.argumentString("script"))
+        if (out == null) {
+            return engineFailed(rpc.id, "evaluation failed")
+        }
+        return resultFrame(rpc.id, out)
+    }
+    if (rpc.method == "page.waitFor") {
+        if (engine.waitFor(rpc.argumentString("page"), locatorParam(rpc, "strategy"), locatorParam(rpc, "selector"), effTimeout(rpc.argumentInt("timeoutMs")))) {
+            return okResult(rpc.id)
+        }
+        return errorFrame(rpc.id, timeoutError("wait timed out"))
+    }
+    if (rpc.method == "page.waitForUrl") {
+        if (engine.waitForUrl(rpc.argumentString("page"), rpc.argumentString("pattern"), effTimeout(rpc.argumentInt("timeoutMs")))) {
+            return okResult(rpc.id)
+        }
+        return errorFrame(rpc.id, timeoutError("wait timed out"))
     }
     if (rpc.method == "page.content") {
         val html = engine.content(rpc.argumentString("page"))

@@ -6,8 +6,10 @@
 
 import { MutableList, MutableMap } from "std.collections"
 import { Closeable } from "std.core"
+import { parseJson } from "std.json"
 import { WorkerPool } from ".browser.pool"
 import { ProxyRegistry } from ".browser.protocol.registry"
+import { WorkerClient, workerConnect } from ".browser.client"
 import { BrowserContext } from ".context.context"
 import { Page } from ".page.page"
 
@@ -31,6 +33,9 @@ type Browser(
     val pool: WorkerPool = WorkerPool(workers)
     val registry: ProxyRegistry = ProxyRegistry()
     val pinned: MutableMap<String, String> = MutableMap<String, String>()
+    val clients: MutableMap<String, WorkerClient> = MutableMap<String, WorkerClient>()
+    val remoteCtx: MutableMap<String, String> = MutableMap<String, String>()
+    val remotePage: MutableMap<String, String> = MutableMap<String, String>()
     var nextContext: Int = 1
     var nextPage: Int = 1
 
@@ -96,9 +101,113 @@ type Browser(
     }
 
     fun closeContext(id: String): Bool {
+        val kids = this.registry.childrenOf(id)
+        var i = 0
+        while (i < kids.size()) {
+            this.remotePage.remove(kids.get(i))
+            i = i + 1
+        }
+        this.remoteCtx.remove(id)
         val unpinned = this.pinned.remove(id) != null
         val dropped = this.registry.remove(id)
         return unpinned || dropped
+    }
+
+    // Transport: one persistent WorkerClient per worker URL, connected
+    // lazily on first command. Routing (newContext/newPage) stays
+    // socket-free; ids minted locally map to worker ids on provision.
+    fun clientFor(url: String): WorkerClient? {
+        val known = this.clients.get(url)
+        if (known != null) {
+            return known
+        }
+        val fresh = workerConnect(url)
+        if (fresh == null) {
+            this.pool.markDead(url)
+            return null
+        }
+        this.clients.put(url, fresh)
+        return fresh
+    }
+
+    fun provisionCtx(local: String): String? {
+        val known = this.remoteCtx.get(local)
+        if (known != null) {
+            return known
+        }
+        val url = this.pinned.get(local)
+        if (url == null) {
+            return null
+        }
+        val client = this.clientFor(url)
+        if (client == null) {
+            return null
+        }
+        val res = client.call("browser.newContext", "{}")
+        if (res == null) {
+            if (client.ws.closed) {
+                this.pool.markDead(url)
+            }
+            return null
+        }
+        val idVal = parseJson(res).get("context")
+        if (idVal == null || idVal!!.isString() == false) {
+            return null
+        }
+        this.remoteCtx.put(local, idVal!!.asString())
+        return idVal!!.asString()
+    }
+
+    fun provisionPage(page: Page): String? {
+        val known = this.remotePage.get(page.id)
+        if (known != null) {
+            return known
+        }
+        val rctx = this.provisionCtx(page.context)
+        if (rctx == null) {
+            return null
+        }
+        val url = this.pinned.get(page.context)
+        if (url == null) {
+            return null
+        }
+        val client = this.clientFor(url)
+        if (client == null) {
+            return null
+        }
+        val res = client.call("context.newPage", "{\"context\": \"$rctx\"}")
+        if (res == null) {
+            if (client.ws.closed) {
+                this.pool.markDead(url)
+            }
+            return null
+        }
+        val idVal = parseJson(res).get("page")
+        if (idVal == null || idVal!!.isString() == false) {
+            return null
+        }
+        this.remotePage.put(page.id, idVal!!.asString())
+        return idVal!!.asString()
+    }
+
+    fun callPage(page: Page, method: String, makeParams: (String) -> String): String? {
+        val rid = this.provisionPage(page)
+        if (rid == null) {
+            return null
+        }
+        val url = this.pinned.get(page.context)
+        if (url == null) {
+            return null
+        }
+        val client = this.clientFor(url)
+        if (client == null) {
+            return null
+        }
+        val res = client.call(method, makeParams(rid))
+        if (res == null && client.ws.closed) {
+            this.pool.markDead(url)
+        }
+        return res
     }
 
     implement fun close(): Void {
@@ -107,6 +216,9 @@ type Browser(
         while (i < live.size()) {
             this.closeContext(live.get(i).id)
             i = i + 1
+        }
+        for (this.clients) { entry ->
+            entry.value.close()
         }
     }
 }

@@ -1,0 +1,116 @@
+// WorkerClient: one persistent WebSocket per worker URL (§§5.2, 30.2).
+//
+// Owns the socket, the frame reader, id counters and the `initialize`
+// handshake. Handles (Browser, contexts, pages) delegate sends here;
+// replies are awaited by id, interleaved notifications skipped (MVP
+// drops them; subscribe dispatch lands later).
+
+import { parseJson } from "std.json"
+import { WsClient, wsConnect } from ".browser.net.ws"
+import { FrameReader } from ".browser.net.reader"
+import { requestFrame, initializeRequest } from ".browser.protocol.envelope"
+import { parseWsUrl } from ".browser.chromium.cdp"
+
+type WorkerClient(val ws: WsClient, val reader: FrameReader, val protoVersion: String, var nextId: Int = 2) {
+
+    fun version(): String {
+        return this.protoVersion
+    }
+
+    fun awaitReply(id: Int): String? {
+        var tries = 0
+        while (tries < 10) {
+            val f = this.reader.readFrame(2000)
+            if (f == null) {
+                return null
+            }
+            if (f.opcode == 8) {
+                this.ws.close()
+                return null
+            }
+            if (f.opcode == 1 || f.opcode == 2) {
+                val msg = parseJson(f.payload)
+                val got = msg.get("id")
+                if (got != null && got!!.isNumber() && got!!.asNumber().toInt() == id) {
+                    val res = msg.get("result")
+                    if (res == null) {
+                        return null
+                    }
+                    return res!!.write()
+                }
+            }
+            tries = tries + 1
+        }
+        return null
+    }
+
+    fun call(method: String, params: String): String? {
+        val id = this.nextId
+        this.nextId = this.nextId + 1
+        if (this.ws.sendText(requestFrame(id, method, params)) == false) {
+            return null
+        }
+        return this.awaitReply(id)
+    }
+
+    fun close(): Void {
+        this.ws.close()
+    }
+}
+
+fun workerPath(url: String): String {
+    var rest = url
+    if (url.indexOf("ws://") == 0) {
+        rest = url.substring(5, url.length)
+    } else if (url.indexOf("wss://") == 0) {
+        rest = url.substring(6, url.length)
+    }
+    if (rest.indexOf("/") < 0) {
+        return url + "/"
+    }
+    return url
+}
+
+fun workerConnect(url: String): WorkerClient? {
+    val ep = parseWsUrl(workerPath(url), 80)
+    if (ep == null) {
+        return null
+    }
+    val ws = wsConnect(ep.host, ep.port, ep.path)
+    if (ws == null) {
+        return null
+    }
+    val reader = FrameReader(ws.socket, "")
+    if (ws.sendText(initializeRequest("1.0")) == false) {
+        ws.close()
+        return null
+    }
+    var tries = 0
+    while (tries < 10) {
+        val f = reader.readFrame(2000)
+        if (f == null) {
+            ws.close()
+            return null
+        }
+        if (f.opcode == 1 || f.opcode == 2) {
+            val msg = parseJson(f.payload)
+            val got = msg.get("id")
+            if (got != null && got!!.isNumber() && got!!.asNumber().toInt() == 1) {
+                val res = msg.get("result")
+                if (res == null) {
+                    ws.close()
+                    return null
+                }
+                val ver = res!!.get("version")
+                if (ver == null || ver!!.isString() == false) {
+                    ws.close()
+                    return null
+                }
+                return WorkerClient(ws, reader, ver!!.asString())
+            }
+        }
+        tries = tries + 1
+    }
+    ws.close()
+    return null
+}

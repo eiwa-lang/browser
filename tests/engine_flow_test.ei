@@ -14,6 +14,8 @@ fun stageReply(id: Int, result: String): String {
 
 fun stageSession(sock: Socket): String {
     var open = true
+    var waitPolls = 0
+    var hrefPolls = 0
     while (open) {
         val f = wsRecv(sock)
         if (f == null) {
@@ -45,8 +47,44 @@ fun stageSession(sock: Socket): String {
                     } else if (name == "Page.navigate") {
                         writeAll(sock, buildFrame(1, stageReply(num, "{\"frameId\": \"F1\"}"), null))
                         writeAll(sock, buildFrame(1, "{\"method\": \"Page.loadEventFired\", \"params\": {}, \"sessionId\": \"S1\"}", null))
+                    } else if (name == "Page.reload") {
+                        writeAll(sock, buildFrame(1, stageReply(num, "{}"), null))
+                        writeAll(sock, buildFrame(1, "{\"method\": \"Page.loadEventFired\", \"params\": {}, \"sessionId\": \"S1\"}", null))
+                    } else if (name == "Page.getNavigationHistory") {
+                        writeAll(sock, buildFrame(1, stageReply(num, "{\"currentIndex\": 1, \"entries\": [{\"id\": 101}, {\"id\": 102}, {\"id\": 103}]}"), null))
+                    } else if (name == "Page.navigateToHistoryEntry") {
+                        writeAll(sock, buildFrame(1, stageReply(num, "{}"), null))
+                        writeAll(sock, buildFrame(1, "{\"method\": \"Page.loadEventFired\", \"params\": {}, \"sessionId\": \"S1\"}", null))
                     } else if (name == "Runtime.evaluate") {
-                        writeAll(sock, buildFrame(1, stageReply(num, "{\"result\": {\"type\": \"string\", \"value\": \"v\"}}"), null))
+                        if (f.payload.indexOf("getBoundingClientRect") >= 0) {
+                            waitPolls = waitPolls + 1
+                            if (waitPolls < 3) {
+                                writeAll(sock, buildFrame(1, stageReply(num, "{\"result\": {\"type\": \"object\", \"subtype\": \"null\"}}"), null))
+                            } else {
+                                writeAll(sock, buildFrame(1, stageReply(num, "{\"result\": {\"type\": \"string\", \"value\": \"found\"}}"), null))
+                            }
+                        } else if (f.payload.indexOf("window.location.href") >= 0) {
+                            hrefPolls = hrefPolls + 1
+                            if (hrefPolls < 3) {
+                                writeAll(sock, buildFrame(1, stageReply(num, "{\"result\": {\"type\": \"string\", \"value\": \"https://x.example/other\"}}"), null))
+                            } else {
+                                writeAll(sock, buildFrame(1, stageReply(num, "{\"result\": {\"type\": \"string\", \"value\": \"https://shop.example/result/1\"}}"), null))
+                            }
+                        } else if (f.payload.indexOf("el.click") >= 0 || f.payload.indexOf("el.value") >= 0) {
+                            writeAll(sock, buildFrame(1, stageReply(num, "{\"result\": {\"type\": \"string\", \"value\": \"ok\"}}"), null))
+                        } else if (f.payload.indexOf("getAttribute") >= 0) {
+                            writeAll(sock, buildFrame(1, stageReply(num, "{\"result\": {\"type\": \"string\", \"value\": \"A\"}}"), null))
+                        } else if (f.payload.indexOf("outerHTML") >= 0) {
+                            writeAll(sock, buildFrame(1, stageReply(num, "{\"result\": {\"type\": \"string\", \"value\": \"<h1>H</h1>\"}}"), null))
+                        } else if (f.payload.indexOf("() => 42") >= 0) {
+                            writeAll(sock, buildFrame(1, stageReply(num, "{\"result\": {\"type\": \"number\", \"value\": 42}}"), null))
+                        } else if (f.payload.indexOf("it's") >= 0) {
+                            writeAll(sock, buildFrame(1, stageReply(num, "{\"result\": {\"type\": \"string\", \"value\": \"quoted\"}}"), null))
+                        } else if (f.payload.indexOf("strategy") >= 0) {
+                            writeAll(sock, buildFrame(1, stageReply(num, "{\"result\": {\"type\": \"string\", \"value\": \"scoped\"}}"), null))
+                        } else {
+                            writeAll(sock, buildFrame(1, stageReply(num, "{\"result\": {\"type\": \"string\", \"value\": \"v\"}}"), null))
+                        }
                     } else {
                         writeAll(sock, buildFrame(1, stageReply(num, "{}"), null))
                     }
@@ -128,6 +166,72 @@ fun driveInner(engine: Engine, stage: Int): String {
     if (stage == 4) {
         return "ok"
     }
+    if (engine.reload(page, 5000) == false) {
+        return "no-reload"
+    }
+    if (stage == 5) {
+        return "ok"
+    }
+    if (engine.goBack(page, 5000) == false) {
+        return "no-back"
+    }
+    if (stage == 6) {
+        return "ok"
+    }
+    if (engine.goForward(page, 5000) == false) {
+        return "no-forward"
+    }
+    if (stage == 7) {
+        return "ok"
+    }
+    if (engine.textByLocator(page, "css", "h1") != "scoped") {
+        return "no-scoped"
+    }
+    if (engine.textByLocator(page, "text", "it's") != "quoted") {
+        return "no-quoted"
+    }
+    if (stage == 8) {
+        return "ok"
+    }
+    if (engine.click(page, "css", "#go") == false) {
+        return "no-click"
+    }
+    if (engine.fill(page, "css", "#q", "say \"hi\"") == false) {
+        return "no-fill"
+    }
+    if (engine.typeText(page, "css", "#q", "!") == false) {
+        return "no-type"
+    }
+    if (stage == 9) {
+        return "ok"
+    }
+    if (engine.attribute(page, "css", "a", "href") != "A") {
+        return "no-attr"
+    }
+    if (stage == 10) {
+        return "ok"
+    }
+    if (engine.content(page) != "<h1>H</h1>") {
+        return "no-content"
+    }
+    if (engine.evaluate(page, "() => 42") != "42") {
+        return "no-eval"
+    }
+    if (stage == 11) {
+        return "ok"
+    }
+    if (engine.waitFor(page, "css", ".product-detail", 5000) == false) {
+        return "no-wait"
+    }
+    if (stage == 12) {
+        return "ok"
+    }
+    if (engine.waitForUrl(page, "**/result/**", 5000) == false) {
+        return "no-wait-url"
+    }
+    if (stage == 13) {
+        return "ok"
+    }
     if (engine.closePage(page) == false) {
         return "no-closepage"
     }
@@ -164,4 +268,126 @@ test "engine stages: navigate" {
 
 test "engine stages: read and close" {
     assert(runStage(19904, 4) == "ok")
+}
+
+test "engine stages: reload" {
+    assert(runStage(19905, 5) == "ok")
+}
+
+test "engine stages: history travel" {
+    assert(runStage(19906, 6) == "ok")
+    assert(runStage(19907, 7) == "ok")
+}
+
+test "engine stages: locator text" {
+    assert(runStage(19908, 8) == "ok")
+}
+
+test "engine stages: locator actions" {
+    assert(runStage(19909, 9) == "ok")
+}
+
+test "engine stages: attribute and reading" {
+    assert(runStage(19910, 10) == "ok")
+    assert(runStage(19911, 11) == "ok")
+}
+
+test "engine stages: waits" {
+    assert(runStage(19912, 12) == "ok")
+    assert(runStage(19913, 13) == "ok")
+}
+
+fun timeoutFake(port: Int): String {
+    val server = TCPServer()
+    if (server.bind(port) == false) {
+        return "bind-fail"
+    }
+    val conn = server.accept()
+    if (conn == null) {
+        server.close()
+        return "accept-fail"
+    }
+    val head = readHttpRequest(conn)
+    if (head == null || answerHandshake(conn, head) == false) {
+        conn.close()
+        server.close()
+        return "handshake-fail"
+    }
+    var served = 0
+    while (served < 20) {
+        val f = wsRecv(conn)
+        if (f == null || f.opcode == 8) {
+            conn.close()
+            server.close()
+            return "ok"
+        }
+        if (f.opcode == 1 || f.opcode == 2) {
+            val msg = parseJson(f.payload)
+            val idVal = msg.get("id")
+            if (idVal != null && idVal!!.isNumber()) {
+                val num = idVal!!.asNumber().toInt()
+                val methodVal = msg.get("method")
+                val method = if (methodVal != null) { methodVal.asString() } else { "" }
+                if (method == "Runtime.evaluate") {
+                    if (f.payload.indexOf("window.location.href") >= 0) {
+                        writeAll(conn, buildFrame(1, stageReply(num, "{\"result\": {\"type\": \"string\", \"value\": \"https://x.example/other\"}}"), null))
+                    } else {
+                        writeAll(conn, buildFrame(1, stageReply(num, "{\"result\": {\"type\": \"object\", \"subtype\": \"null\"}}"), null))
+                    }
+                } else if (method == "Target.createBrowserContext") {
+                    writeAll(conn, buildFrame(1, stageReply(num, "{\"browserContextId\": \"CB1\"}"), null))
+                } else if (method == "Target.createTarget") {
+                    writeAll(conn, buildFrame(1, stageReply(num, "{\"targetId\": \"T1\"}"), null))
+                } else if (method == "Target.attachToTarget") {
+                    writeAll(conn, buildFrame(1, stageReply(num, "{\"sessionId\": \"S1\"}"), null))
+                } else {
+                    writeAll(conn, buildFrame(1, stageReply(num, "{}"), null))
+                }
+            }
+        }
+        served = served + 1
+    }
+    conn.close()
+    server.close()
+    return "cap-hit"
+}
+
+fun driveTimeout(port: Int): String {
+    val engine = stageEngine(port)
+    if (engine == null) {
+        return "no-engine"
+    }
+    val ctx = engine.newContext()
+    if (ctx == null) {
+        return "no-ctx"
+    }
+    val page = engine.newPage(ctx)
+    if (page == null) {
+        return "no-page"
+    }
+    if (engine.waitFor(page, "css", ".never", 300)) {
+        return "waited-forever"
+    }
+    if (engine.waitForUrl(page, "**/never/**", 300)) {
+        return "url-waited-forever"
+    }
+    engine.close()
+    return "ok"
+}
+
+fun runTimeout(port: Int): String {
+    val server = task {
+        timeoutFake(port)
+    }
+    sleepMs(150)
+    val client = task {
+        driveTimeout(port)
+    }
+    val res = client.await()
+    server.await()
+    return res
+}
+
+test "engine stages: waits time out" {
+    assert(runTimeout(19914) == "ok")
 }

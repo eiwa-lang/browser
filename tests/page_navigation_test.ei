@@ -1,0 +1,121 @@
+import { assert } from "std.core"
+import { parseJson } from "std.json"
+import { sleepMs } from "std.time"
+import { TCPServer } from "std.net"
+import { buildFrame, wsRecv, writeAll } from ".browser.net.ws"
+import { readHttpRequest, answerHandshake } from ".browser.net.ws_server"
+import { Browser } from ".browser.browser"
+
+// Scripted fake worker: initialize, remote provisioning, page.goto.
+// Rejects any goto that does not carry the provisioned page id.
+fun fakeGotoWorker(port: Int): String {
+    val server = TCPServer()
+    if (server.bind(port) == false) {
+        return "bind-fail"
+    }
+    val conn = server.accept()
+    if (conn == null) {
+        server.close()
+        return "accept-fail"
+    }
+    val head = readHttpRequest(conn)
+    if (head == null || answerHandshake(conn, head) == false) {
+        conn.close()
+        server.close()
+        return "handshake-fail"
+    }
+    var served = 0
+    while (served < 20) {
+        val f = wsRecv(conn)
+        if (f == null || f.opcode == 8) {
+            conn.close()
+            server.close()
+            return "ok"
+        }
+        if (f.opcode == 1 || f.opcode == 2) {
+            val msg = parseJson(f.payload)
+            val idVal = msg.get("id")
+            if (idVal != null) {
+                val id = idVal.write()
+                val methodVal = msg.get("method")
+                val method = if (methodVal != null) { methodVal.asString() } else { "" }
+                if (method == "initialize") {
+                    writeAll(conn, buildFrame(1, "{\"jsonrpc\": \"2.0\", \"id\": $id, \"result\": {\"protocol\": \"eiwa-browser\", \"version\": \"1.0\", \"capabilities\": [\"browser\"]}}", null))
+                } else if (method == "browser.newContext") {
+                    writeAll(conn, buildFrame(1, "{\"jsonrpc\": \"2.0\", \"id\": $id, \"result\": {\"context\": \"CTX-9\"}}", null))
+                } else if (method == "context.newPage") {
+                    writeAll(conn, buildFrame(1, "{\"jsonrpc\": \"2.0\", \"id\": $id, \"result\": {\"page\": \"PAGE-7\"}}", null))
+                } else if (method == "page.goto") {
+                    val params = msg.get("params")
+                    val got = if (params != null) { params.get("page") } else { null }
+                    if (got != null && got!!.isString() && got!!.asString() == "PAGE-7") {
+                        writeAll(conn, buildFrame(1, "{\"jsonrpc\": \"2.0\", \"id\": $id, \"result\": {\"ok\": true}}", null))
+                    } else {
+                        writeAll(conn, buildFrame(1, "{\"jsonrpc\": \"2.0\", \"id\": $id, \"error\": {\"code\": -32602, \"message\": \"unknown page\", \"data\": {\"code\": \"UNKNOWN\", \"recoverable\": false}}}", null))
+                    }
+                } else if (method == "page.reload" || method == "page.goBack" || method == "page.goForward") {
+                    writeAll(conn, buildFrame(1, "{\"jsonrpc\": \"2.0\", \"id\": $id, \"result\": {\"ok\": true}}", null))
+                } else if (method == "page.click" || method == "page.fill" || method == "page.typeText") {
+                    writeAll(conn, buildFrame(1, "{\"jsonrpc\": \"2.0\", \"id\": $id, \"result\": {\"ok\": true}}", null))
+                } else if (method == "page.waitFor" || method == "page.waitForUrl") {
+                    writeAll(conn, buildFrame(1, "{\"jsonrpc\": \"2.0\", \"id\": $id, \"result\": {\"ok\": true}}", null))
+                } else if (method == "page.attribute") {
+                    writeAll(conn, buildFrame(1, "{\"jsonrpc\": \"2.0\", \"id\": $id, \"result\": {\"value\": \"A\"}}", null))
+                } else if (method == "page.content") {
+                    writeAll(conn, buildFrame(1, "{\"jsonrpc\": \"2.0\", \"id\": $id, \"result\": {\"html\": \"<h1>H</h1>\"}}", null))
+                } else if (method == "page.evaluate") {
+                    writeAll(conn, buildFrame(1, "{\"jsonrpc\": \"2.0\", \"id\": $id, \"result\": 42}", null))
+                } else if (method == "page.text") {
+                    val params = msg.get("params")
+                    val loc = if (params != null) { params.get("locator") } else { null }
+                    if (loc != null) {
+                        writeAll(conn, buildFrame(1, "{\"jsonrpc\": \"2.0\", \"id\": $id, \"result\": {\"text\": \"scoped\"}}", null))
+                    } else {
+                        writeAll(conn, buildFrame(1, "{\"jsonrpc\": \"2.0\", \"id\": $id, \"result\": {\"text\": \"whole\"}}", null))
+                    }
+                } else {
+                    writeAll(conn, buildFrame(1, "{\"jsonrpc\": \"2.0\", \"id\": $id, \"error\": {\"code\": -32601, \"message\": \"unknown\", \"data\": {\"code\": \"UNKNOWN\", \"recoverable\": false}}}", null))
+                }
+            }
+        }
+        served = served + 1
+    }
+    conn.close()
+    server.close()
+    return "cap-hit"
+}
+
+test "page: goto provisions remotely and navigates" {
+    val worker = task {
+        fakeGotoWorker(19951)
+    }
+    sleepMs(150)
+    val browser = Browser(["ws://127.0.0.1:19951"], 1)
+    val page = browser.newPage()
+    assert(page.goto("https://example.com"), "g1")
+    assert(page.goto("https://example.com", waitUntil = "load", timeoutMs = 5000), "g2")
+    assert(page.reload(), "rel")
+    assert(page.goBack(), "back")
+    assert(page.goForward(), "fwd")
+    assert(page.text() == "whole", "tfull")
+    assert(page.locator("h1").text() == "scoped", "tscoped")
+    assert(page.locator("#go").click(), "click")
+    assert(page.locator("#q").fill("say \"hi\""), "fill")
+    assert(page.locator("#q").typeText("!"), "typet")
+    assert(page.locator("a").attribute("href") == "A", "attr")
+    assert(page.content() == "<h1>H</h1>", "content")
+    assert(page.evaluate("() => 42")!!.asNumber().toInt() == 42, "eval")
+    assert(page.waitFor(".product-detail"), "wait")
+    assert(page.locator(".product-detail").waitFor(5000), "locwait")
+    assert(page.waitForUrl("**/result/**"), "waiturl")
+    browser.close()
+    assert(worker.await() == "ok")
+}
+
+test "page: goto fails fast with no worker" {
+    val browser = Browser(["ws://127.0.0.1:19949"], 1)
+    val page = browser.newPage()
+    assert(page.goto("https://example.com") == false)
+    browser.close()
+}
+

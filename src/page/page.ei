@@ -1,9 +1,213 @@
 // Page handle (§6.3): a browser tab inside a context.
 
 import { Closeable } from "std.core"
+import { MutableMap } from "std.collections"
+import { JsonValue, jsonObject, jsonString, jsonNumber, parseJson } from "std.json"
 import { Browser } from ".browser.browser"
+import { Locator, locatorValue, parseLocator } from ".browser.locator.locator"
+
+fun pageParams(page: String): String {
+    val m = MutableMap<String, JsonValue>()
+    m.put("page", jsonString(page))
+    return jsonObject(m.freeze()).write()
+}
+
+fun locatorParams(page: String, loc: Locator): String {
+    val m = MutableMap<String, JsonValue>()
+    m.put("page", jsonString(page))
+    m.put("locator", locatorValue(loc))
+    return jsonObject(m.freeze()).write()
+}
+
+fun locatorValueParams(page: String, loc: Locator, value: String): String {
+    val m = MutableMap<String, JsonValue>()
+    m.put("page", jsonString(page))
+    m.put("locator", locatorValue(loc))
+    m.put("value", jsonString(value))
+    return jsonObject(m.freeze()).write()
+}
+
+fun locatorNameParams(page: String, loc: Locator, name: String): String {
+    val m = MutableMap<String, JsonValue>()
+    m.put("page", jsonString(page))
+    m.put("locator", locatorValue(loc))
+    m.put("name", jsonString(name))
+    return jsonObject(m.freeze()).write()
+}
+
+fun scriptParams(page: String, script: String): String {
+    val m = MutableMap<String, JsonValue>()
+    m.put("page", jsonString(page))
+    m.put("script", jsonString(script))
+    return jsonObject(m.freeze()).write()
+}
+
+fun timeoutParams(page: String, timeoutMs: Int): String {
+    val m = MutableMap<String, JsonValue>()
+    m.put("page", jsonString(page))
+    m.put("timeoutMs", jsonNumber(timeoutMs.toDouble()))
+    return jsonObject(m.freeze()).write()
+}
+
+fun locatorTimeoutParams(page: String, loc: Locator, timeoutMs: Int): String {
+    val m = MutableMap<String, JsonValue>()
+    m.put("page", jsonString(page))
+    m.put("locator", locatorValue(loc))
+    m.put("timeoutMs", jsonNumber(timeoutMs.toDouble()))
+    return jsonObject(m.freeze()).write()
+}
+
+fun patternParams(page: String, pattern: String, timeoutMs: Int): String {
+    val m = MutableMap<String, JsonValue>()
+    m.put("page", jsonString(page))
+    m.put("pattern", jsonString(pattern))
+    m.put("timeoutMs", jsonNumber(timeoutMs.toDouble()))
+    return jsonObject(m.freeze()).write()
+}
+
+fun gotoParams(page: String, url: String, waitUntil: String, timeoutMs: Int): String {
+    val m = MutableMap<String, JsonValue>()
+    m.put("page", jsonString(page))
+    m.put("url", jsonString(url))
+    m.put("waitUntil", jsonString(waitUntil))
+    m.put("timeoutMs", jsonNumber(timeoutMs.toDouble()))
+    return jsonObject(m.freeze()).write()
+}
 
 type Page(val browser: Browser, val id: String, val context: String) : Closeable {
+
+    fun locator(raw: String): Locator {
+        val parsed = parseLocator(raw)
+        return Locator(parsed.strategy, parsed.selector, this)
+    }
+
+    fun text(loc: Locator? = null): String? {
+        if (loc == null) {
+            return this.readTextResult(this.browser.callPage(this, "page.text", { rid ->
+                "{\"page\": \"" + rid + "\"}"
+            }))
+        }
+        val target = loc
+        return this.readTextResult(this.browser.callPage(this, "page.text", { rid ->
+            "{\"page\": \"" + rid + "\", \"locator\": " + target.param() + "}"
+        }))
+    }
+
+    fun readTextResult(res: String?): String? {
+        if (res == null) {
+            return null
+        }
+        val t = parseJson(res).get("text")
+        if (t == null || t!!.isString() == false) {
+            return null
+        }
+        return t!!.asString()
+    }
+
+    fun goto(url: String, waitUntil: String = "load", timeoutMs: Int = 30000): Bool {
+        val res = this.browser.callPage(this, "page.goto", { rid ->
+            gotoParams(rid, url, waitUntil, timeoutMs)
+        })
+        return res != null
+    }
+
+    fun reload(timeoutMs: Int = 30000): Bool {
+        val res = this.browser.callPage(this, "page.reload", { rid ->
+            timeoutParams(rid, timeoutMs)
+        })
+        return res != null
+    }
+
+    fun goBack(timeoutMs: Int = 30000): Bool {
+        val res = this.browser.callPage(this, "page.goBack", { rid ->
+            timeoutParams(rid, timeoutMs)
+        })
+        return res != null
+    }
+
+    fun goForward(timeoutMs: Int = 30000): Bool {
+        val res = this.browser.callPage(this, "page.goForward", { rid ->
+            timeoutParams(rid, timeoutMs)
+        })
+        return res != null
+    }
+
+    fun click(loc: Locator): Bool {
+        val res = this.browser.callPage(this, "page.click", { rid ->
+            locatorParams(rid, loc)
+        })
+        return res != null
+    }
+
+    fun fill(loc: Locator, value: String): Bool {
+        val res = this.browser.callPage(this, "page.fill", { rid ->
+            locatorValueParams(rid, loc, value)
+        })
+        return res != null
+    }
+
+    fun typeText(loc: Locator, value: String): Bool {
+        val res = this.browser.callPage(this, "page.typeText", { rid ->
+            locatorValueParams(rid, loc, value)
+        })
+        return res != null
+    }
+
+    fun attribute(loc: Locator, name: String): String? {
+        val res = this.browser.callPage(this, "page.attribute", { rid ->
+            locatorNameParams(rid, loc, name)
+        })
+        if (res == null) {
+            return null
+        }
+        val v = parseJson(res).get("value")
+        if (v == null || v!!.isString() == false) {
+            return null
+        }
+        return v!!.asString()
+    }
+
+    fun content(): String? {
+        val res = this.browser.callPage(this, "page.content", { rid ->
+            pageParams(rid)
+        })
+        if (res == null) {
+            return null
+        }
+        val h = parseJson(res).get("html")
+        if (h == null || h!!.isString() == false) {
+            return null
+        }
+        return h!!.asString()
+    }
+
+    fun evaluate(script: String): JsonValue? {
+        val res = this.browser.callPage(this, "page.evaluate", { rid ->
+            scriptParams(rid, script)
+        })
+        if (res == null) {
+            return null
+        }
+        return parseJson(res)
+    }
+
+    fun waitFor(selector: String, timeoutMs: Int = 30000): Bool {
+        return this.waitForLocator(this.locator(selector), timeoutMs)
+    }
+
+    fun waitForLocator(loc: Locator, timeoutMs: Int = 30000): Bool {
+        val res = this.browser.callPage(this, "page.waitFor", { rid ->
+            locatorTimeoutParams(rid, loc, timeoutMs)
+        })
+        return res != null
+    }
+
+    fun waitForUrl(pattern: String, timeoutMs: Int = 30000): Bool {
+        val res = this.browser.callPage(this, "page.waitForUrl", { rid ->
+            patternParams(rid, pattern, timeoutMs)
+        })
+        return res != null
+    }
 
     implement fun close(): Void {
         this.browser.closePage(this.id)

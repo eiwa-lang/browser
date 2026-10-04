@@ -1,6 +1,6 @@
 import { assert } from "std.core"
 import { parseJson } from "std.json"
-import { cdpRequest, cdpRequestSession, createTargetCmd, attachCmd, navigateCmd, evaluateCmd, closeTargetCmd, parseAttached, parseTargetCreated, parseNavigateFrame, evaluateValue, cdpEventMethod, cdpSessionOf } from ".browser.chromium.cdp_commands"
+import { cdpRequest, cdpRequestSession, createTargetCmd, attachCmd, navigateCmd, evaluateCmd, closeTargetCmd, historyEntryCmd, parseHistoryEntry, locatorTextScript, locatorClickScript, locatorFillScript, locatorTypeScript, locatorAttrScript, locatorWaitScript, parseAttached, parseTargetCreated, parseNavigateFrame, evaluateValue, cdpEventMethod, cdpSessionOf } from ".browser.chromium.cdp_commands"
 import { parseWsUrl } from ".browser.chromium.cdp"
 
 test "cdp: endpoint parsing covers real Chromium shapes" {
@@ -61,4 +61,55 @@ test "cdp: evaluate values and load events" {
     assert(cdpSessionOf(load) == "S1")
     assert(cdpEventMethod(parseJson("{\"id\": 1}")) == "")
     assert(cdpSessionOf(parseJson("{\"id\": 1}")) == "")
+}
+
+test "cdp: history travel commands" {
+    assert(historyEntryCmd(7, "", 3) == null)
+    assert(historyEntryCmd(7, "S1", 0) == null)
+    val back = parseJson(historyEntryCmd(7, "S1", 12)!!)
+    assert(back.get("method")!!.asString() == "Page.navigateToHistoryEntry")
+    assert(back.get("params")!!.get("entryId")!!.asNumber().toInt() == 12)
+    assert(back.get("sessionId")!!.asString() == "S1")
+    val history = parseJson("{\"id\": 8, \"result\": {\"currentIndex\": 1, \"entries\": [{\"id\": 101, \"url\": \"https://a.example\"}, {\"id\": 102, \"url\": \"https://b.example\"}, {\"id\": 103, \"url\": \"https://c.example\"}]}}")
+    assert(parseHistoryEntry(history, -1) == 101)
+    assert(parseHistoryEntry(history, 1) == 103)
+    assert(parseHistoryEntry(history, 5) == null)
+    assert(parseHistoryEntry(history, -5) == null)
+    assert(parseHistoryEntry(parseJson("{\"id\": 8, \"result\": {}}"), 1) == null)
+}
+
+test "cdp: locator text script" {
+    assert(locatorTextScript("", "h1") == null)
+    assert(locatorTextScript("css", "") == null)
+    val script = locatorTextScript("css", "h1")!!
+    assert(script.indexOf("\"strategy\":\"css\"") >= 0)
+    assert(script.indexOf("\"selector\":\"h1\"") >= 0)
+    assert(script.indexOf("querySelector") >= 0)
+    val quoted = locatorTextScript("text", "it's")!!
+    assert(quoted.indexOf("it's") >= 0)
+}
+
+test "cdp: locator action scripts" {
+    assert(locatorClickScript("", "h1") == null)
+    assert(locatorClickScript("css", "") == null)
+    val click = locatorClickScript("css", "h1")!!
+    assert(click.indexOf("\"strategy\":\"css\"") >= 0)
+    assert(click.indexOf("el.click()") >= 0)
+    val fill = locatorFillScript("css", "q", "say \"hi\"")!!
+    assert(fill.indexOf("\\\"hi\\\"") >= 0)
+    assert(fill.indexOf("el.value") >= 0)
+    assert(locatorFillScript("css", "q", "") != null)
+    val tp = locatorTypeScript("xpath", "//i", "a")!!
+    assert(tp.indexOf("el.value") >= 0)
+    val attr = locatorAttrScript("css", "a", "href")!!
+    assert(attr.indexOf("getAttribute") >= 0)
+    assert(locatorAttrScript("css", "a", "") == null)
+}
+
+test "cdp: locator wait script" {
+    assert(locatorWaitScript("", "h1") == null)
+    assert(locatorWaitScript("css", "") == null)
+    val script = locatorWaitScript("css", "h1")!!
+    assert(script.indexOf("\"strategy\":\"css\"") >= 0)
+    assert(script.indexOf("getBoundingClientRect") >= 0)
 }
