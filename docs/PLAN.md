@@ -131,14 +131,26 @@ counters and the pending-reply map; handles delegate to it.
 - [x] `Locator`/`Page`: `click/fill/typeText/attribute` + `Page.content`
       and `Page.evaluate` (JSON value) through Engine and dispatch
       (§§6.3, 7, 10); `type` is an Eiwa keyword, method is `typeText`
+- [x] `Page.press`/`Locator.press`: focus snippet + CDP `Input`
+      (`insertText` for single chars, `dispatchKeyEvent` down/up with
+      `windowsVirtualKeyCode` for named keys; unknown keys fail)
 - [x] `Page.waitFor(selector)/waitForUrl(pattern)` + `Locator.waitFor`
       (engine-side polling, visibility via rect, `**`/`*`/`?` globs,
       server-side timeouts as `TIMEOUT`) (§8)
-- [ ] `Page`: `onRequest/onResponse/onDownload` (implicit
-      `page.subscribe`, §18); `ObservedRequest/Response` payloads (§11)
-- [ ] `BrowserContext`: `cookies/addCookie/clearCookies/storageState`;
-      `newContext(storageState)` (§§13, 14); `Download.bytes()` (§15)
-- [ ] `Browser.use/unuse/subscribed` + `NetworkLogger` (§§20, 21, 48)
+- [x] `Page`: `onRequest/onResponse/onConsole/onDownload` (implicit
+      `page.subscribe`, §18) + `Browser.poll()` delivery (stash in
+      `call`, explicit `poll`; shared-reader test helpers, notification
+      stash so shared-reader RPCs never drop interleaved notes);
+      `ObservedRequest/Response` payloads (§11)
+- [x] `BrowserContext`: `cookies/addCookie/clearCookies/storageState`
+      (cookies-only MVP; `origins` always `[]`) + `newContext(storageState)`
+      applying cookies client-side (§§13, 14)
+- [x] Downloads: `Browser.setDownloadBehavior` on first download
+      subscribe, guid tracking, `Download.bytes()` + `read(offset,size)`
+      over base64url, `page.onDownload` (§15)
+- [x] `Browser.use/unuse/subscribed` + `NetworkLogger` object
+      (request/response/console; subscribe pages before `use`)
+      (§§20, 21, 48)
 - [ ] `setTimeout` on Browser/Context/Page + operation-level
       `timeoutMs` (§34); `TimeoutConfig/resolveTimeout` go internal
 - [ ] `version()` / `isConnected()` (§6.1)

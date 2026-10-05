@@ -2,10 +2,13 @@
 //
 // State travels as a value; downloads arrive as handles plus
 // `download.bytes` (small, inline) or `artifact.read` chunks (large).
+// Bytes travel base64url; the app saves.
 
 import { MutableMap } from "std.collections"
-import { JsonValue, jsonObject, jsonString, jsonNumber } from "std.json"
+import { JsonValue, jsonObject, jsonString, jsonNumber, parseJson } from "std.json"
 import { requestFrame } from ".browser.protocol.envelope"
+import { Encoding } from "crypto.encoding"
+import { Browser } from ".browser.browser"
 
 fun storageStateCmd(id: Int, context: String): String? {
     if (context == "") {
@@ -17,29 +20,69 @@ fun storageStateCmd(id: Int, context: String): String? {
 }
 
 type Download(
+    val browser: Browser,
     val id: String,
+    val context: String,
     val page: String,
     val fileName: String,
     val mime: String,
     val size: Int
-)
+) {
 
-fun parseDownload(params: JsonValue): Download? {
+    fun bytes(): String? {
+        val res = this.browser.callDownload(this.context, "download.bytes", downloadParams(this.id))
+        if (res == null) {
+            return null
+        }
+        return decodeBytes(res)
+    }
+
+    fun read(offset: Int, size: Int): String? {
+        val res = this.browser.callDownload(this.context, "artifact.read", artifactParams(this.id, offset, size))
+        if (res == null) {
+            return null
+        }
+        return decodeBytes(res)
+    }
+}
+
+fun downloadParams(download: String): String {
+    val m = MutableMap<String, JsonValue>()
+    m.put("download", jsonString(download))
+    return jsonObject(m.freeze()).write()
+}
+
+fun artifactParams(artifact: String, offset: Int, size: Int): String {
+    val m = MutableMap<String, JsonValue>()
+    m.put("artifact", jsonString(artifact))
+    m.put("offset", jsonNumber(offset.toDouble()))
+    m.put("size", jsonNumber(size.toDouble()))
+    return jsonObject(m.freeze()).write()
+}
+
+fun decodeBytes(res: String): String? {
+    val b = parseJson(res).get("bytes")
+    if (b == null || b!!.isString() == false) {
+        return null
+    }
+    return Encoding.base64UrlDecode(b!!.asString())
+}
+
+fun parseDownload(browser: Browser, ctx: String, page: String, params: JsonValue): Download? {
     val id = params.get("download")
-    val page = params.get("page")
     val name = params.get("fileName")
     val mime = params.get("mime")
     val size = params.get("size")
-    if (id == null || page == null || name == null || mime == null || size == null) {
+    if (id == null || name == null || mime == null || size == null) {
         return null
     }
-    if (id!!.isString() == false || page!!.isString() == false) {
+    if (id!!.isString() == false || name!!.isString() == false) {
         return null
     }
-    if (name!!.isString() == false || mime!!.isString() == false || size!!.isNumber() == false) {
+    if (mime!!.isString() == false || size!!.isNumber() == false) {
         return null
     }
-    return Download(id!!.asString(), page!!.asString(), name!!.asString(), mime!!.asString(), size!!.asNumber().toInt())
+    return Download(browser, id!!.asString(), ctx, page, name!!.asString(), mime!!.asString(), size!!.asNumber().toInt())
 }
 
 fun downloadBytesCmd(id: Int, download: String): String? {

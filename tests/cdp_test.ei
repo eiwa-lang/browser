@@ -1,6 +1,7 @@
 import { assert } from "std.core"
 import { parseJson } from "std.json"
-import { cdpRequest, cdpRequestSession, createTargetCmd, attachCmd, navigateCmd, evaluateCmd, closeTargetCmd, historyEntryCmd, parseHistoryEntry, locatorTextScript, locatorClickScript, locatorFillScript, locatorTypeScript, locatorAttrScript, locatorWaitScript, parseAttached, parseTargetCreated, parseNavigateFrame, evaluateValue, cdpEventMethod, cdpSessionOf } from ".browser.chromium.cdp_commands"
+import { cdpRequest, cdpRequestSession, createTargetCmd, attachCmd, navigateCmd, evaluateCmd, closeTargetCmd, historyEntryCmd, parseHistoryEntry, locatorTextScript, locatorClickScript, locatorFillScript, locatorTypeScript, locatorAttrScript, locatorWaitScript, locatorFocusScript, inputInsertCmd, inputKeyCmd, vkFor, storageCookiesCmd, storageSetCmd, storageClearCmd, parseStorageCookies, parseAttached, parseTargetCreated, parseNavigateFrame, evaluateValue, cdpEventMethod, cdpSessionOf } from ".browser.chromium.cdp_commands"
+import { Cookie } from ".browser.storage.cookies"
 import { parseWsUrl } from ".browser.chromium.cdp"
 
 test "cdp: endpoint parsing covers real Chromium shapes" {
@@ -112,4 +113,40 @@ test "cdp: locator wait script" {
     val script = locatorWaitScript("css", "h1")!!
     assert(script.indexOf("\"strategy\":\"css\"") >= 0)
     assert(script.indexOf("getBoundingClientRect") >= 0)
+}
+
+test "cdp: input commands" {
+    assert(locatorFocusScript("", "h1") == null)
+    val focus = locatorFocusScript("css", "h1")!!
+    assert(focus.indexOf("el.focus()") >= 0)
+    assert(locatorFocusScript("", "h1") == null)
+    val focus = locatorFocusScript("css", "h1")!!
+    assert(focus.indexOf("el.focus()") >= 0)
+    assert(inputInsertCmd(3, "", "a") == null)
+    val ins = parseJson(inputInsertCmd(3, "S1", "a")!!)
+    assert(ins.get("method")!!.asString() == "Input.insertText")
+    assert(inputKeyCmd(4, "S1", "keyDown", "Enter", "Enter", 13) != null)
+    assert(inputKeyCmd(4, "", "keyDown", "Enter", "Enter", 13) == null)
+    val key = parseJson(inputKeyCmd(4, "S1", "keyDown", "Enter", "Enter", 13)!!)
+    assert(key.get("params")!!.get("windowsVirtualKeyCode")!!.asNumber().toInt() == 13)
+    assert(vkFor("Enter") == 13)
+    assert(vkFor("ArrowLeft") == 37)
+    assert(vkFor("F99") == 0)
+    assert(vkFor("") == 0)
+}
+
+test "cdp: storage cookie commands" {
+    assert(storageCookiesCmd(1, "") == null)
+    val get = parseJson(storageCookiesCmd(1, "CB1")!!)
+    assert(get.get("method")!!.asString() == "Storage.getCookies")
+    val set = parseJson(storageSetCmd(2, "CB1", Cookie("sid", "abc", "shop.example.com"))!!)
+    assert(set.get("params")!!.get("cookies") != null)
+    assert(storageSetCmd(2, "CB1", Cookie("sid", "abc")) == null)
+    assert(storageClearCmd(3, "") == null)
+    assert(storageClearCmd(3, "CB1") != null)
+    val jar = parseJson("{\"id\": 1, \"result\": {\"cookies\": [{\"name\": \"sid\", \"value\": \"abc\", \"domain\": \"shop.example.com\"}, {\"value\": \"noname\"}]}}")
+    val parsed = parseStorageCookies(jar)
+    assert(parsed.size() == 1)
+    assert(parsed.get(0).name == "sid")
+    assert(parsed.get(0).value == "abc")
 }

@@ -1,9 +1,11 @@
 import { assert } from "std.core"
 import { parseJson } from "std.json"
+import { Browser } from ".browser.browser"
+import { Encoding } from "crypto.encoding"
 import { parseRequest, parseResponse } from ".browser.network.network"
-import { Cookie, cookiesCmd, addCookieCmd, clearCookiesCmd } from ".browser.storage.cookies"
+import { Cookie, cookieValue, parseCookie, cookiesCmd, addCookieCmd, clearCookiesCmd } from ".browser.storage.cookies"
 import { storageStateCmd, parseDownload, downloadBytesCmd, artifactReadCmd } from ".browser.storage.state"
-import { PluginRegistry, networkLoggerTopics, validTopic } from ".browser.plugins.plugins"
+import { PluginRegistry, NetworkLogger, validTopic } from ".browser.plugins.plugins"
 import { parseFrame } from ".browser.protocol.envelope"
 
 test "state: network events parse to typed payloads" {
@@ -35,10 +37,12 @@ test "state: cookie commands validate name and context" {
 }
 
 test "state: downloads parse and fetch by handle" {
-    val dl = parseDownload(parseJson("{\"download\": \"dl-1\", \"page\": \"page-7\", \"fileName\": \"doc.pdf\", \"mime\": \"application/pdf\", \"size\": 41}"))!!
+    val browser = Browser(["ws://127.0.0.1:19968"], 1)
+    val dl = parseDownload(browser, "ctx-1", "page-7", parseJson("{\"download\": \"dl-1\", \"fileName\": \"doc.pdf\", \"mime\": \"application/pdf\", \"size\": 41}"))!!
     assert(dl.fileName == "doc.pdf")
     assert(dl.size == 41)
-    assert(parseDownload(parseJson("{\"download\": \"dl-1\"}")) == null)
+    assert(dl.page == "page-7")
+    assert(parseDownload(browser, "ctx-1", "page-7", parseJson("{\"download\": \"dl-1\"}")) == null)
     assert(parseFrame(downloadBytesCmd(5, "dl-1")!!).method == "download.bytes")
     assert(downloadBytesCmd(5, "") == null)
     val chunk = parseFrame(artifactReadCmd(6, "dl-1", 0, 8192)!!)
@@ -46,21 +50,37 @@ test "state: downloads parse and fetch by handle" {
     assert(chunk.argumentInt("size") == 8192)
     assert(artifactReadCmd(6, "dl-1", -1, 8192) == null)
     assert(artifactReadCmd(6, "dl-1", 0, 0) == null)
+    browser.close()
+}
+
+test "state: base64url round-trips bytes" {
+    assert(Encoding.base64UrlDecode(Encoding.base64Url("PDF-DATA")) == "PDF-DATA")
 }
 
 test "state: plugin registry is observe-only in MVP" {
     assert(validTopic("request"))
     assert(validTopic("challengeDetected") == false)
     val reg = PluginRegistry()
-    assert(reg.use("NetworkLogger", networkLoggerTopics()))
-    assert(reg.use("NetworkLogger", networkLoggerTopics()) == false)
-    assert(reg.use("", networkLoggerTopics()) == false)
+    assert(reg.use("NetworkLogger", NetworkLogger.topics()))
+    assert(reg.use("NetworkLogger", NetworkLogger.topics()) == false)
+    assert(reg.use("", NetworkLogger.topics()) == false)
     assert(reg.subscribed("NetworkLogger", "request"))
-    assert(reg.subscribed("NetworkLogger", "console") == false)
+    assert(reg.subscribed("NetworkLogger", "console"))
     assert(reg.subscribed("Ghost", "request") == false)
     assert(reg.use("Noisy", ["request", "request", "bogus", "console"]))
     assert(reg.subscribed("Noisy", "console"))
     assert(reg.plugins().size() == 2)
     assert(reg.unuse("Noisy"))
     assert(reg.unuse("Noisy") == false)
+}
+
+test "state: cookie parsing round-trips" {
+    val c = Cookie("sid", "abc", "shop.example.com")
+    val back = parseCookie(cookieValue(c))!!
+    assert(back.name == "sid")
+    assert(back.value == "abc")
+    assert(back.domain == "shop.example.com")
+    assert(back.path == "/")
+    assert(parseCookie(parseJson("{\"value\": \"x\"}")) == null)
+    assert(parseCookie(parseJson("{}")) == null)
 }

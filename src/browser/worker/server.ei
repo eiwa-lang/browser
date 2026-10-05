@@ -7,7 +7,7 @@
 import { Socket, TCPServer } from "std.net"
 import { MutableList, MutableMap } from "std.collections"
 import { StackTask } from "std.coroutines"
-import { JsonValue, jsonObject, jsonString } from "std.json"
+import { JsonValue, jsonObject, jsonString, jsonArray } from "std.json"
 import { JsonRpc } from "std.jsonrpc"
 import { wsRecv, buildFrame, writeAll } from ".browser.net.ws"
 import { readHttpRequest, answerHandshake } from ".browser.net.ws_server"
@@ -15,6 +15,7 @@ import { parseFrame, isNotification, resultFrame, errorFrame } from ".browser.pr
 import { BrowserError, timeoutError } from ".browser.protocol.errors"
 import { dispatch, healthResponse } from ".browser.protocol.dispatch"
 import { Engine } from ".browser.engine.engine"
+import { cookieValue, parseCookie } from ".browser.storage.cookies"
 
 fun routeOf(head: String): String {
     if (head.indexOf("Upgrade: websocket") >= 0) {
@@ -27,10 +28,15 @@ fun routeOf(head: String): String {
 }
 
 fun serveFrames(sock: Socket): Void {
-    serveFramesWith(sock, { raw -> dispatch(raw) })
+    serveFramesWith(sock, { raw -> dispatch(raw) }, { noNotes() })
 }
 
-fun serveFramesWith(sock: Socket, route: (String) -> String): Void {
+fun noNotes(): List<String> {
+    val out: MutableList<String> = MutableList<String>()
+    return out.freeze()
+}
+
+fun serveFramesWith(sock: Socket, route: (String) -> String, after: () -> List<String>): Void {
     var open = true
     while (open) {
         val f = wsRecv(sock)
@@ -45,6 +51,12 @@ fun serveFramesWith(sock: Socket, route: (String) -> String): Void {
             val reply = route(f.payload)
             if (reply != "") {
                 writeAll(sock, buildFrame(1, reply, null))
+            }
+            val notes = after()
+            var i = 0
+            while (i < notes.size()) {
+                writeAll(sock, buildFrame(1, notes.get(i), null))
+                i = i + 1
             }
         }
     }
@@ -228,6 +240,12 @@ fun engineDispatch(engine: Engine, raw: String): String {
         }
         return engineFailed(rpc.id, "type failed")
     }
+    if (rpc.method == "page.press") {
+        if (engine.press(rpc.argumentString("page"), locatorParam(rpc, "strategy"), locatorParam(rpc, "selector"), rpc.argumentString("key"))) {
+            return okResult(rpc.id)
+        }
+        return engineFailed(rpc.id, "press failed")
+    }
     if (rpc.method == "page.attribute") {
         val attr = engine.attribute(rpc.argumentString("page"), locatorParam(rpc, "strategy"), locatorParam(rpc, "selector"), rpc.argumentString("name"))
         if (attr == null) {
@@ -253,6 +271,75 @@ fun engineDispatch(engine: Engine, raw: String): String {
             return okResult(rpc.id)
         }
         return errorFrame(rpc.id, timeoutError("wait timed out"))
+    }
+    if (rpc.method == "page.subscribe") {
+        if (engine.subscribe(rpc.argumentString("page"), rpc.argumentString("topic"))) {
+            return okResult(rpc.id)
+        }
+        return engineFailed(rpc.id, "subscribe failed")
+    }
+    if (rpc.method == "page.unsubscribe") {
+        if (engine.unsubscribe(rpc.argumentString("page"), rpc.argumentString("topic"))) {
+            return okResult(rpc.id)
+        }
+        return engineFailed(rpc.id, "unsubscribe failed")
+    }
+    if (rpc.method == "download.bytes") {
+        val data = engine.downloadBytes(rpc.argumentString("download"))
+        if (data == null) {
+            return engineFailed(rpc.id, "unknown download")
+        }
+        return strResult(rpc.id, "bytes", data)
+    }
+    if (rpc.method == "artifact.read") {
+        val data = engine.downloadChunk(rpc.argumentString("artifact"), rpc.argumentInt("offset"), rpc.argumentInt("size"))
+        if (data == null) {
+            return engineFailed(rpc.id, "unknown artifact")
+        }
+        return strResult(rpc.id, "bytes", data)
+    }
+    if (rpc.method == "context.cookies") {
+        val jar = engine.cookies(rpc.argumentString("context"))
+        if (jar == null) {
+            return engineFailed(rpc.id, "unknown context")
+        }
+        val known = jar
+        val items: MutableList<JsonValue> = MutableList<JsonValue>()
+        var i = 0
+        while (i < known.size()) {
+            items.add(cookieValue(known.get(i)))
+            i = i + 1
+        }
+        val m = MutableMap<String, JsonValue>()
+        m.put("cookies", jsonArray(items.freeze()))
+        return resultFrame(rpc.id, jsonObject(m.freeze()).write())
+    }
+    if (rpc.method == "context.addCookie") {
+        val cookieArg = rpc.argument("cookie")
+        if (cookieArg == null) {
+            return engineFailed(rpc.id, "add cookie failed")
+        }
+        val parsed = parseCookie(cookieArg)
+        if (parsed == null) {
+            return engineFailed(rpc.id, "add cookie failed")
+        }
+        if (engine.addCookie(rpc.argumentString("context"), parsed)) {
+            return okResult(rpc.id)
+        }
+        return engineFailed(rpc.id, "add cookie failed")
+    }
+    if (rpc.method == "context.clearCookies") {
+        if (engine.clearCookies(rpc.argumentString("context"))) {
+            return okResult(rpc.id)
+        }
+        return engineFailed(rpc.id, "clear cookies failed")
+    }
+    if (rpc.method == "context.storageState") {
+        val state = engine.storageState(rpc.argumentString("context"))
+        if (state == null) {
+            return engineFailed(rpc.id, "unknown context")
+        }
+        return resultFrame(rpc.id, state)
     }
     if (rpc.method == "page.content") {
         val html = engine.content(rpc.argumentString("page"))
@@ -294,7 +381,7 @@ fun serveOneEngine(sock: Socket, engine: Engine): String {
         if (answerHandshake(sock, head) == false) {
             return "bad"
         }
-        serveFramesWith(sock, { raw -> engineDispatch(engine, raw) })
+        serveFramesWith(sock, { raw -> engineDispatch(engine, raw) }, { engine.drain() })
         return "ws"
     }
     sock.close()

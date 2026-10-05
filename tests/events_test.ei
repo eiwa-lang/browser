@@ -1,0 +1,135 @@
+import { assert } from "std.core"
+import { parseJson } from "std.json"
+import { sleepMs } from "std.time"
+import { TCPServer } from "std.net"
+import { MutableList } from "std.collections"
+import { buildFrame, wsRecv, writeAll } from ".browser.net.ws"
+import { readHttpRequest, answerHandshake } from ".browser.net.ws_server"
+import { Browser } from ".browser.browser"
+import { NetworkLogger } from ".browser.plugins.plugins"
+import { Download } from ".browser.storage.state"
+
+// Scripted fake worker: initialize, provisioning, subscribes, one
+// goto pushing three notifications, download byte replies.
+fun fakeEventsWorker(port: Int): String {
+    val server = TCPServer()
+    if (server.bind(port) == false) {
+        return "bind-fail"
+    }
+    val conn = server.accept()
+    if (conn == null) {
+        server.close()
+        return "accept-fail"
+    }
+    val head = readHttpRequest(conn)
+    if (head == null || answerHandshake(conn, head) == false) {
+        conn.close()
+        server.close()
+        return "handshake-fail"
+    }
+    var served = 0
+    var subs = 0
+    while (served < 30) {
+        val f = wsRecv(conn)
+        if (f == null || f.opcode == 8) {
+            conn.close()
+            server.close()
+            return "subs-$subs"
+        }
+        if (f.opcode == 1 || f.opcode == 2) {
+            val msg = parseJson(f.payload)
+            val idVal = msg.get("id")
+            if (idVal != null) {
+                val id = idVal.write()
+                val methodVal = msg.get("method")
+                val method = if (methodVal != null) { methodVal.asString() } else { "" }
+                if (method == "initialize") {
+                    writeAll(conn, buildFrame(1, "{\"jsonrpc\": \"2.0\", \"id\": $id, \"result\": {\"protocol\": \"eiwa-browser\", \"version\": \"1.0\", \"capabilities\": [\"browser\"]}}", null))
+                } else if (method == "browser.newContext") {
+                    writeAll(conn, buildFrame(1, "{\"jsonrpc\": \"2.0\", \"id\": $id, \"result\": {\"context\": \"CTX-9\"}}", null))
+                } else if (method == "context.newPage") {
+                    writeAll(conn, buildFrame(1, "{\"jsonrpc\": \"2.0\", \"id\": $id, \"result\": {\"page\": \"PAGE-7\"}}", null))
+                } else if (method == "page.subscribe") {
+                    subs = subs + 1
+                    writeAll(conn, buildFrame(1, "{\"jsonrpc\": \"2.0\", \"id\": $id, \"result\": {\"ok\": true}}", null))
+                } else if (method == "page.goto") {
+                    writeAll(conn, buildFrame(1, "{\"method\": \"page.request\", \"params\": {\"page\": \"PAGE-7\", \"request\": \"req-1\", \"url\": \"https://example.com\", \"method\": \"GET\"}}", null))
+                    writeAll(conn, buildFrame(1, "{\"method\": \"page.response\", \"params\": {\"page\": \"PAGE-7\", \"request\": \"req-1\", \"url\": \"https://example.com\", \"status\": 200}}", null))
+                    writeAll(conn, buildFrame(1, "{\"method\": \"page.console\", \"params\": {\"page\": \"PAGE-7\", \"kind\": \"log\", \"text\": \"hello\"}}", null))
+                    writeAll(conn, buildFrame(1, "{\"jsonrpc\": \"2.0\", \"id\": $id, \"result\": {\"ok\": true}}", null))
+                } else if (method == "download.bytes" || method == "artifact.read") {
+                    writeAll(conn, buildFrame(1, "{\"jsonrpc\": \"2.0\", \"id\": $id, \"result\": {\"bytes\": \"aGk=\"}}", null))
+                } else {
+                    writeAll(conn, buildFrame(1, "{\"jsonrpc\": \"2.0\", \"id\": $id, \"error\": {\"code\": -32601, \"message\": \"unknown\", \"data\": {\"code\": \"UNKNOWN\", \"recoverable\": false}}}", null))
+                }
+            }
+        }
+        served = served + 1
+    }
+    conn.close()
+    server.close()
+    return "cap-hit"
+}
+
+test "events: callbacks fire on poll" {
+    val worker = task {
+        fakeEventsWorker(19965)
+    }
+    sleepMs(150)
+    val browser = Browser(["ws://127.0.0.1:19965"], 1)
+    val page = browser.newPage()
+    val reqs: MutableList<String> = MutableList<String>()
+    val statuses: MutableList<String> = MutableList<String>()
+    val logs: MutableList<String> = MutableList<String>()
+    assert(page.onRequest({ req -> reqs.add(req.url) }), "sub-req")
+    assert(page.onResponse({ res -> statuses.add(res.status.toString()) }), "sub-res")
+    assert(page.onConsole({ ev -> logs.add(ev.text) }), "sub-con")
+    assert(page.goto("https://example.com"), "goto")
+    assert(reqs.size() == 0, "no-early")
+    assert(browser.poll() == 3, "poll")
+    assert(reqs.size() == 1 && reqs.get(0) == "https://example.com", "req")
+    assert(statuses.size() == 1 && statuses.get(0) == "200", "res")
+    assert(logs.size() == 1 && logs.get(0) == "hello", "con")
+    assert(browser.poll() == 0, "idle")
+    browser.close()
+    assert(worker.await() == "subs-3", "worker")
+}
+
+test "events: tmp-subscribeall" {
+    val worker = task {
+        fakeEventsWorker(19966)
+    }
+    sleepMs(150)
+    val browser = Browser(["ws://127.0.0.1:19966"], 1)
+    browser.newPage()
+    browser.subscribeAll("request")
+    browser.close()
+    worker.await()
+}
+
+test "events: tmp-subscribeall" {
+    val worker = task {
+        fakeEventsWorker(19966)
+    }
+    sleepMs(150)
+    val browser = Browser(["ws://127.0.0.1:19966"], 1)
+    browser.newPage()
+    browser.newPage()
+    browser.subscribeAll("request")
+    browser.close()
+    worker.await()
+}
+
+test "events: download bytes decode" {
+    val worker = task {
+        fakeEventsWorker(19967)
+    }
+    sleepMs(150)
+    val browser = Browser(["ws://127.0.0.1:19967"], 1)
+    val ctx = browser.newContext()
+    val dl = Download(browser, "DL-1", ctx.id, "page-9", "f.pdf", "application/pdf", 2)
+    assert(dl.bytes() == "hi", "bytes")
+    assert(dl.read(0, 8) == "hi", "chunk")
+    browser.close()
+    worker.await()
+}

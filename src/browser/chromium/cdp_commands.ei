@@ -3,8 +3,9 @@
 // Frames travel over the browser WS client; ids are per-connection,
 // routing per `sessionId`. Shapes follow the DevTools protocol.
 
-import { MutableMap } from "std.collections"
-import { JsonValue, jsonObject, jsonString, jsonBool, jsonNumber } from "std.json"
+import { MutableList, MutableMap } from "std.collections"
+import { JsonValue, jsonObject, jsonString, jsonBool, jsonNumber, jsonArray } from "std.json"
+import { Cookie, parseCookie } from ".browser.storage.cookies"
 
 fun cdpRequest(id: Int, method: String, params: String): String {
     return "{\"id\": $id, \"method\": \"$method\", \"params\": $params}"
@@ -91,6 +92,82 @@ fun sessionCmd(id: Int, session: String, method: String): String? {
     return cdpRequestSession(id, session, method, "{}")
 }
 
+fun downloadBehaviorCmd(id: Int, dir: String, contextId: String = ""): String? {
+    if (dir == "") {
+        return null
+    }
+    val params = MutableMap<String, JsonValue>()
+    params.put("behavior", jsonString("allow"))
+    if (contextId != "") {
+        params.put("browserContextId", jsonString(contextId))
+    }
+    params.put("downloadPath", jsonString(dir))
+    params.put("eventsEnabled", jsonBool(true))
+    return cdpRequest(id, "Browser.setDownloadBehavior", jsonObject(params.freeze()).write())
+}
+
+fun storageCookiesCmd(id: Int, ctx: String): String? {
+    if (ctx == "") {
+        return null
+    }
+    val params = MutableMap<String, JsonValue>()
+    params.put("browserContextId", jsonString(ctx))
+    return cdpRequest(id, "Storage.getCookies", jsonObject(params.freeze()).write())
+}
+
+fun storageSetCmd(id: Int, ctx: String, cookie: Cookie): String? {
+    if (ctx == "" || cookie.name == "" || cookie.domain == "") {
+        return null
+    }
+    val path = if (cookie.path == "") { "/" } else { cookie.path }
+    val entry = MutableMap<String, JsonValue>()
+    entry.put("name", jsonString(cookie.name))
+    entry.put("value", jsonString(cookie.value))
+    entry.put("url", jsonString("https://" + cookie.domain + path))
+    entry.put("domain", jsonString(cookie.domain))
+    entry.put("path", jsonString(path))
+    entry.put("secure", jsonBool(cookie.secure))
+    entry.put("httpOnly", jsonBool(cookie.httpOnly))
+    entry.put("sameSite", jsonString(cookie.sameSite))
+    val items: MutableList<JsonValue> = MutableList<JsonValue>()
+    items.add(jsonObject(entry.freeze()))
+    val params = MutableMap<String, JsonValue>()
+    params.put("cookies", jsonArray(items.freeze()))
+    params.put("browserContextId", jsonString(ctx))
+    return cdpRequest(id, "Storage.setCookies", jsonObject(params.freeze()).write())
+}
+
+fun storageClearCmd(id: Int, ctx: String): String? {
+    if (ctx == "") {
+        return null
+    }
+    val params = MutableMap<String, JsonValue>()
+    params.put("browserContextId", jsonString(ctx))
+    return cdpRequest(id, "Storage.clearCookies", jsonObject(params.freeze()).write())
+}
+
+fun parseStorageCookies(reply: JsonValue): List<Cookie> {
+    val out: MutableList<Cookie> = MutableList<Cookie>()
+    val result = reply.get("result")
+    if (result == null) {
+        return out.freeze()
+    }
+    val jar = result!!.get("cookies")
+    if (jar == null || jar!!.isArray() == false) {
+        return out.freeze()
+    }
+    val entries = jar!!.asArray()
+    var i = 0
+    while (i < entries.size()) {
+        val c = parseCookie(entries.get(i))
+        if (c != null) {
+            out.add(c)
+        }
+        i = i + 1
+    }
+    return out.freeze()
+}
+
 fun locatorFindChain(): String {
     return "let el = null; if (s.strategy === \"css\") { el = document.querySelector(s.selector); } else if (s.strategy === \"xpath\") { el = document.evaluate(s.selector, document, null, 9, null).singleNodeValue; } else if (s.strategy === \"text\") { const v = s.selector; const q = v.indexOf('\"') < 0 ? '\"' + v + '\"' : (v.indexOf(\"'\") < 0 ? \"'\" + v + \"'\" : \"concat('\" + v.split(\"'\").join(\"', \\\"'\\\", '\") + \"')\"); el = document.evaluate(\"//*[contains(normalize-space(), \" + q + \")]\", document, null, 9, null).singleNodeValue; } else if (s.strategy === \"role\") { el = document.querySelector('[role=\"' + s.selector.split('\"').join('\\\"') + '\"]'); }"
 }
@@ -148,6 +225,77 @@ fun locatorWaitScript(strategy: String, selector: String): String? {
         return null
     }
     return "((s) => {" + locatorFindChain() + " if (!el) return null; const r = el.getBoundingClientRect(); return (r.width > 0 && r.height > 0) ? \"found\" : null;})(" + jsonObject(locatorArgs(strategy, selector).freeze()).write() + ")"
+}
+
+fun locatorFocusScript(strategy: String, selector: String): String? {
+    if (strategy == "" || selector == "") {
+        return null
+    }
+    return "((s) => {" + locatorFindChain() + " if (!el) return null; el.focus(); return \"ok\";})(" + jsonObject(locatorArgs(strategy, selector).freeze()).write() + ")"
+}
+
+fun inputInsertCmd(id: Int, session: String, text: String): String? {
+    if (session == "" || text == "") {
+        return null
+    }
+    val params = MutableMap<String, JsonValue>()
+    params.put("text", jsonString(text))
+    return cdpRequestSession(id, session, "Input.insertText", jsonObject(params.freeze()).write())
+}
+
+fun inputKeyCmd(id: Int, session: String, etype: String, key: String, code: String, vk: Int): String? {
+    if (session == "" || etype == "" || key == "" || code == "" || vk <= 0) {
+        return null
+    }
+    val params = MutableMap<String, JsonValue>()
+    params.put("type", jsonString(etype))
+    params.put("key", jsonString(key))
+    params.put("code", jsonString(code))
+    params.put("windowsVirtualKeyCode", jsonNumber(vk.toDouble()))
+    return cdpRequestSession(id, session, "Input.dispatchKeyEvent", jsonObject(params.freeze()).write())
+}
+
+fun vkFor(key: String): Int {
+    if (key == "Enter") {
+        return 13
+    }
+    if (key == "Tab") {
+        return 9
+    }
+    if (key == "Escape") {
+        return 27
+    }
+    if (key == "Backspace") {
+        return 8
+    }
+    if (key == "Delete") {
+        return 46
+    }
+    if (key == "ArrowLeft") {
+        return 37
+    }
+    if (key == "ArrowUp") {
+        return 38
+    }
+    if (key == "ArrowRight") {
+        return 39
+    }
+    if (key == "ArrowDown") {
+        return 40
+    }
+    if (key == "Home") {
+        return 36
+    }
+    if (key == "End") {
+        return 35
+    }
+    if (key == "PageUp") {
+        return 33
+    }
+    if (key == "PageDown") {
+        return 34
+    }
+    return 0
 }
 
 fun historyEntryCmd(id: Int, session: String, entryId: Int): String? {

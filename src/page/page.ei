@@ -5,6 +5,9 @@ import { MutableMap } from "std.collections"
 import { JsonValue, jsonObject, jsonString, jsonNumber, parseJson } from "std.json"
 import { Browser } from ".browser.browser"
 import { Locator, locatorValue, parseLocator } from ".browser.locator.locator"
+import { ObservedRequest, ObservedResponse } from ".browser.network.network"
+import { ConsoleEvent } from ".browser.challenge.challenge"
+import { Download } from ".browser.storage.state"
 
 fun pageParams(page: String): String {
     val m = MutableMap<String, JsonValue>()
@@ -32,6 +35,14 @@ fun locatorNameParams(page: String, loc: Locator, name: String): String {
     m.put("page", jsonString(page))
     m.put("locator", locatorValue(loc))
     m.put("name", jsonString(name))
+    return jsonObject(m.freeze()).write()
+}
+
+fun locatorKeyParams(page: String, loc: Locator, key: String): String {
+    val m = MutableMap<String, JsonValue>()
+    m.put("page", jsonString(page))
+    m.put("locator", locatorValue(loc))
+    m.put("key", jsonString(key))
     return jsonObject(m.freeze()).write()
 }
 
@@ -74,7 +85,15 @@ fun gotoParams(page: String, url: String, waitUntil: String, timeoutMs: Int): St
     return jsonObject(m.freeze()).write()
 }
 
-type Page(val browser: Browser, val id: String, val context: String) : Closeable {
+type Page(
+    val browser: Browser,
+    val id: String,
+    val context: String,
+    var reqHandler: ((ObservedRequest) -> Void)? = null,
+    var resHandler: ((ObservedResponse) -> Void)? = null,
+    var conHandler: ((ConsoleEvent) -> Void)? = null,
+    var dlHandler: ((Download) -> Void)? = null
+) : Closeable {
 
     fun locator(raw: String): Locator {
         val parsed = parseLocator(raw)
@@ -153,6 +172,13 @@ type Page(val browser: Browser, val id: String, val context: String) : Closeable
         return res != null
     }
 
+    fun press(loc: Locator, key: String): Bool {
+        val res = this.browser.callPage(this, "page.press", { rid ->
+            locatorKeyParams(rid, loc, key)
+        })
+        return res != null
+    }
+
     fun attribute(loc: Locator, name: String): String? {
         val res = this.browser.callPage(this, "page.attribute", { rid ->
             locatorNameParams(rid, loc, name)
@@ -212,4 +238,63 @@ type Page(val browser: Browser, val id: String, val context: String) : Closeable
     implement fun close(): Void {
         this.browser.closePage(this.id)
     }
+
+    fun onRequest(handler: (ObservedRequest) -> Void): Bool {
+        return this.browser.watchRequest(this, handler)
+    }
+
+    fun onResponse(handler: (ObservedResponse) -> Void): Bool {
+        return this.browser.watchResponse(this, handler)
+    }
+
+    fun onConsole(handler: (ConsoleEvent) -> Void): Bool {
+        return this.browser.watchConsole(this, handler)
+    }
+
+    fun onDownload(handler: (Download) -> Void): Bool {
+        return this.browser.watchDownload(this, handler)
+    }
+
+    fun fireRequest(req: ObservedRequest): Bool {
+        val h = this.reqHandler
+        if (h == null) {
+            return false
+        }
+        h(req)
+        return true
+    }
+
+    fun fireResponse(res: ObservedResponse): Bool {
+        val h = this.resHandler
+        if (h == null) {
+            return false
+        }
+        h(res)
+        return true
+    }
+
+    fun fireConsole(ev: ConsoleEvent): Bool {
+        val h = this.conHandler
+        if (h == null) {
+            return false
+        }
+        h(ev)
+        return true
+    }
+
+    fun fireDownload(dl: Download): Bool {
+        val h = this.dlHandler
+        if (h == null) {
+            return false
+        }
+        h(dl)
+        return true
+    }
+}
+
+fun subscribeParams(page: String, topic: String): String {
+    val m = MutableMap<String, JsonValue>()
+    m.put("page", jsonString(page))
+    m.put("topic", jsonString(topic))
+    return jsonObject(m.freeze()).write()
 }

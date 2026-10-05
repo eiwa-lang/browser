@@ -28,6 +28,38 @@ fun cookieValue(cookie: Cookie): JsonValue {
     return jsonObject(m.freeze())
 }
 
+fun stringField(obj: JsonValue, key: String, fallback: String): String {
+    val v = obj.get(key)
+    if (v == null || v!!.isString() == false) {
+        return fallback
+    }
+    return v!!.asString()
+}
+
+fun parseCookie(obj: JsonValue): Cookie? {
+    val name = obj.get("name")
+    if (name == null || name!!.isString() == false || name!!.asString() == "") {
+        return null
+    }
+    val expiresVal = obj.get("expires")
+    var expires = 0
+    if (expiresVal != null && expiresVal!!.isNumber()) {
+        expires = expiresVal!!.asNumber().toInt()
+    }
+    val httpVal = obj.get("httpOnly")
+    val secVal = obj.get("secure")
+    return Cookie(
+        name!!.asString(),
+        stringField(obj, "value", ""),
+        stringField(obj, "domain", ""),
+        stringField(obj, "path", "/"),
+        expires,
+        if (httpVal != null && httpVal!!.isBool()) { httpVal!!.asBool() } else { false },
+        if (secVal != null && secVal!!.isBool()) { secVal!!.asBool() } else { false },
+        stringField(obj, "sameSite", "Lax")
+    )
+}
+
 fun cookiesCmd(id: Int, context: String): String? {
     if (context == "") {
         return null

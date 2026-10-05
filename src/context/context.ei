@@ -1,9 +1,11 @@
 // BrowserContext handle (§6.2): isolated session owned by a Browser.
 
 import { Closeable } from "std.core"
-import { List } from "std.collections"
+import { List, MutableList, MutableMap } from "std.collections"
+import { JsonValue, jsonObject, jsonString, parseJson } from "std.json"
 import { Browser } from ".browser.browser"
 import { Page } from ".page.page"
+import { Cookie, cookieValue, parseCookie } from ".browser.storage.cookies"
 
 type BrowserContext(val browser: Browser, val id: String) : Closeable {
 
@@ -19,7 +21,84 @@ type BrowserContext(val browser: Browser, val id: String) : Closeable {
         return this.browser.workerOf(this.id)
     }
 
+    fun cookies(): List<Cookie>? {
+        val res = this.browser.callContext(this, "context.cookies", { rid ->
+            contextParams(rid)
+        })
+        if (res == null) {
+            return null
+        }
+        val jar = parseJson(res).get("cookies")
+        if (jar == null || jar!!.isArray() == false) {
+            return null
+        }
+        val out: MutableList<Cookie> = MutableList<Cookie>()
+        val entries = jar!!.asArray()
+        var i = 0
+        while (i < entries.size()) {
+            val c = parseCookie(entries.get(i))
+            if (c != null) {
+                out.add(c)
+            }
+            i = i + 1
+        }
+        return out.freeze()
+    }
+
+    fun addCookie(cookie: Cookie): Bool {
+        val res = this.browser.callContext(this, "context.addCookie", { rid ->
+            cookieParams(rid, cookie)
+        })
+        return res != null
+    }
+
+    fun clearCookies(): Bool {
+        val res = this.browser.callContext(this, "context.clearCookies", { rid ->
+            contextParams(rid)
+        })
+        return res != null
+    }
+
+    fun storageState(): String? {
+        val res = this.browser.callContext(this, "context.storageState", { rid ->
+            contextParams(rid)
+        })
+        return res
+    }
+
+    fun applyState(state: String?): Void {
+        if (state == null) {
+            return
+        }
+        val jar = parseJson(state).get("cookies")
+        if (jar == null || jar!!.isArray() == false) {
+            return
+        }
+        val entries = jar!!.asArray()
+        var i = 0
+        while (i < entries.size()) {
+            val c = parseCookie(entries.get(i))
+            if (c != null) {
+                this.addCookie(c)
+            }
+            i = i + 1
+        }
+    }
+
     implement fun close(): Void {
         this.browser.closeContext(this.id)
     }
+}
+
+fun contextParams(ctx: String): String {
+    val m = MutableMap<String, JsonValue>()
+    m.put("context", jsonString(ctx))
+    return jsonObject(m.freeze()).write()
+}
+
+fun cookieParams(ctx: String, cookie: Cookie): String {
+    val m = MutableMap<String, JsonValue>()
+    m.put("context", jsonString(ctx))
+    m.put("cookie", cookieValue(cookie))
+    return jsonObject(m.freeze()).write()
 }

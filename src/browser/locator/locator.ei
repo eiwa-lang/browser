@@ -45,6 +45,14 @@ type Locator(val strategy: String, val selector: String, val page: Page? = null)
         return p.typeText(this, value)
     }
 
+    fun press(key: String): Bool {
+        val p = this.page
+        if (p == null) {
+            return false
+        }
+        return p.press(this, key)
+    }
+
     fun attribute(name: String): String? {
         val p = this.page
         if (p == null) {

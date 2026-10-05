@@ -1,17 +1,22 @@
 // Browser client handle (§§5.2, 6.1).
 //
-// Owns the worker pool, the proxy registry, id counters and sticky
-// context→worker pins. Transport (real WebSockets) attaches later;
-// routing decisions are fully testable here.
+// Owns the worker pool, the proxy registry, id counters, sticky
+// context→worker pins and one persistent WebSocket per worker.
+// Event callbacks fire on `poll()` (explicit) and around commands.
 
 import { MutableList, MutableMap } from "std.collections"
 import { Closeable } from "std.core"
 import { parseJson } from "std.json"
 import { WorkerPool } from ".browser.pool"
 import { ProxyRegistry } from ".browser.protocol.registry"
+import { Subscriptions } from ".browser.protocol.subscriptions"
+import { PluginRegistry } from ".browser.plugins.plugins"
+import { ObservedRequest, ObservedResponse, parseRequest, parseResponse } from ".browser.network.network"
+import { ConsoleEvent, parseConsole } from ".browser.challenge.challenge"
+import { Download, parseDownload } from ".browser.storage.state"
 import { WorkerClient, workerConnect } from ".browser.client"
 import { BrowserContext } from ".context.context"
-import { Page } from ".page.page"
+import { Page, subscribeParams } from ".page.page"
 
 type NoWorkerAvailable(val detail: String) : Throwable {
     implement fun message(): String {
@@ -36,10 +41,13 @@ type Browser(
     val clients: MutableMap<String, WorkerClient> = MutableMap<String, WorkerClient>()
     val remoteCtx: MutableMap<String, String> = MutableMap<String, String>()
     val remotePage: MutableMap<String, String> = MutableMap<String, String>()
+    val subs: Subscriptions = Subscriptions()
+    val tracked: MutableMap<String, Page> = MutableMap<String, Page>()
+    val plugins: PluginRegistry = PluginRegistry()
     var nextContext: Int = 1
     var nextPage: Int = 1
 
-    fun newContext(): BrowserContext {
+    fun newContext(storageState: String? = null): BrowserContext {
         if (this.headless == false) {
             return throw NoWorkerAvailable("headed browsers have no display in MVP")
         }
@@ -51,7 +59,9 @@ type Browser(
         this.nextContext = this.nextContext + 1
         this.pinned.put(id, url)
         if (this.registry.register(id, "browser")) {
-            return BrowserContext(this, id)
+            val ctx = BrowserContext(this, id)
+            ctx.applyState(storageState)
+            return ctx
         }
         this.pinned.remove(id)
         return throw NoWorkerAvailable("context registry refused")
@@ -78,7 +88,9 @@ type Browser(
         val id = "page-${this.nextPage}"
         this.nextPage = this.nextPage + 1
         if (this.registry.register(id, c.id)) {
-            return Page(this, id, c.id)
+            val page = Page(this, id, c.id)
+            this.tracked.put(id, page)
+            return page
         }
         // Unreachable with minted ids (register only rejects malformed
         // ones); typed as provisioning failure.
@@ -90,13 +102,22 @@ type Browser(
         val ids = this.registry.childrenOf(ctx.id)
         var i = 0
         while (i < ids.size()) {
-            out.add(Page(this, ids.get(i), ctx.id))
+            val known = this.tracked.get(ids.get(i))
+            if (known != null) {
+                out.add(known)
+            } else {
+                val fresh = Page(this, ids.get(i), ctx.id)
+                this.tracked.put(ids.get(i), fresh)
+                out.add(fresh)
+            }
             i = i + 1
         }
         return out.freeze()
     }
 
     fun closePage(id: String): Bool {
+        this.tracked.remove(id)
+        this.subs.dropPage(id)
         return this.registry.remove(id)
     }
 
@@ -105,6 +126,8 @@ type Browser(
         var i = 0
         while (i < kids.size()) {
             this.remotePage.remove(kids.get(i))
+            this.tracked.remove(kids.get(i))
+            this.subs.dropPage(kids.get(i))
             i = i + 1
         }
         this.remoteCtx.remove(id)
@@ -208,6 +231,206 @@ type Browser(
             this.pool.markDead(url)
         }
         return res
+    }
+
+    fun callContext(ctx: BrowserContext, method: String, makeParams: (String) -> String): String? {
+        val rid = this.provisionCtx(ctx.id)
+        if (rid == null) {
+            return null
+        }
+        val url = this.pinned.get(ctx.id)
+        if (url == null) {
+            return null
+        }
+        val client = this.clientFor(url)
+        if (client == null) {
+            return null
+        }
+        val res = client.call(method, makeParams(rid))
+        if (res == null && client.ws.closed) {
+            this.pool.markDead(url)
+        }
+        return res
+    }
+
+    fun callDownload(ctx: String, method: String, params: String): String? {
+        val url = this.pinned.get(ctx)
+        if (url == null) {
+            return null
+        }
+        val client = this.clientFor(url)
+        if (client == null) {
+            return null
+        }
+        val res = client.call(method, params)
+        if (res == null && client.ws.closed) {
+            this.pool.markDead(url)
+        }
+        return res
+    }
+
+    fun localPage(remote: String): String? {
+        for (this.remotePage) { entry ->
+            if (entry.value == remote) {
+                return entry.key
+            }
+        }
+        return null
+    }
+
+    fun subscribePage(page: Page, topic: String): Bool {
+        if (this.subs.subscribe(page.id, topic) == false) {
+            return true
+        }
+        val res = this.callPage(page, "page.subscribe", { rid ->
+            subscribeParams(rid, topic)
+        })
+        if (res == null) {
+            this.subs.unsubscribe(page.id, topic)
+            return false
+        }
+        return true
+    }
+
+    fun watchRequest(page: Page, handler: (ObservedRequest) -> Void): Bool {
+        if (this.subscribePage(page, "request") == false) {
+            return false
+        }
+        page.reqHandler = handler
+        return true
+    }
+
+    fun watchResponse(page: Page, handler: (ObservedResponse) -> Void): Bool {
+        if (this.subscribePage(page, "response") == false) {
+            return false
+        }
+        page.resHandler = handler
+        return true
+    }
+
+    fun watchConsole(page: Page, handler: (ConsoleEvent) -> Void): Bool {
+        if (this.subscribePage(page, "console") == false) {
+            return false
+        }
+        page.conHandler = handler
+        return true
+    }
+
+    fun watchDownload(page: Page, handler: (Download) -> Void): Bool {
+        if (this.subscribePage(page, "download") == false) {
+            return false
+        }
+        page.dlHandler = handler
+        return true
+    }
+
+    fun use(name: String, topics: List<String>): Bool {
+        if (this.plugins.use(name, topics) == false) {
+            return false
+        }
+        var i = 0
+        while (i < topics.size()) {
+            this.subscribeAll(topics.get(i))
+            i = i + 1
+        }
+        return true
+    }
+
+    fun unuse(name: String): Bool {
+        return this.plugins.unuse(name)
+    }
+
+    fun subscribed(name: String, topic: String): Bool {
+        return this.plugins.subscribed(name, topic)
+    }
+
+    fun subscribeAll(topic: String): Void {
+        val ctxs = this.contexts()
+        var i = 0
+        while (i < ctxs.size()) {
+            val pages = ctxs.get(i).pages()
+            var j = 0
+            while (j < pages.size()) {
+                this.subscribePage(pages.get(j), topic)
+                j = j + 1
+            }
+            i = i + 1
+        }
+    }
+
+    fun poll(timeoutMs: Int = 2000): Int {
+        var delivered = 0
+        for (this.clients) { entry ->
+            delivered = delivered + this.dispatchAll(entry.value.drainEvents())
+            delivered = delivered + this.dispatchAll(entry.value.poll(timeoutMs))
+        }
+        return delivered
+    }
+
+    fun dispatchAll(notes: List<String>): Int {
+        var n = 0
+        var i = 0
+        while (i < notes.size()) {
+            if (this.dispatchOne(notes.get(i))) {
+                n = n + 1
+            }
+            i = i + 1
+        }
+        return n
+    }
+
+    fun dispatchOne(raw: String): Bool {
+        val msg = parseJson(raw)
+        val methodVal = msg.get("method")
+        if (methodVal == null || methodVal!!.isString() == false) {
+            return false
+        }
+        val method = methodVal!!.asString()
+        val params = msg.get("params")
+        if (params == null) {
+            return false
+        }
+        val pageVal = params!!.get("page")
+        if (pageVal == null || pageVal!!.isString() == false) {
+            return false
+        }
+        val local = this.localPage(pageVal!!.asString())
+        if (local == null) {
+            return false
+        }
+        val page = this.tracked.get(local)
+        if (page == null) {
+            return false
+        }
+        if (method == "page.request") {
+            val req = parseRequest(params)
+            if (req == null) {
+                return false
+            }
+            return page.fireRequest(req)
+        }
+        if (method == "page.response") {
+            val res = parseResponse(params)
+            if (res == null) {
+                return false
+            }
+            return page.fireResponse(res)
+        }
+        if (method == "page.console") {
+            val ev = parseConsole(params)
+            if (ev == null) {
+                return false
+            }
+            return page.fireConsole(ev)
+        }
+        if (method == "page.download") {
+            val dl = parseDownload(this, page.context, page.id, params)
+            if (dl == null) {
+                return false
+            }
+            return page.fireDownload(dl)
+        }
+        return false
     }
 
     implement fun close(): Void {

@@ -1,0 +1,154 @@
+import { assert } from "std.core"
+import { parseJson } from "std.json"
+import { Env } from "std.env"
+import { sleepMs } from "std.time"
+import { TCPServer } from "std.net"
+import { wsConnect, writeAll } from ".browser.net.ws"
+import { readHttpRequest } from ".browser.net.ws_server"
+import { httpGet } from ".browser.net.http"
+import { launchChromium } from ".browser.chromium.chromium"
+import { debuggerUrl, parseWsUrl } from ".browser.chromium.cdp"
+import { cdpConn } from ".browser.chromium.connection"
+import { Engine } from ".browser.engine.engine"
+import { Encoding } from "crypto.encoding"
+
+fun chromiumExe(): String {
+    val exe = Env.get("CHROMIUM_EXE")
+    if (exe == null || exe == "") {
+        return "chromium"
+    }
+    return exe
+}
+
+fun serveDownloadFile(port: Int): String {
+    val server = TCPServer()
+    if (server.bind(port) == false) {
+        return "bind-fail"
+    }
+    // Real Chromium may open several connections (navigation, download);
+    // serve each until it goes quiet.
+    var served = 0
+    var idle = 0
+    while (served < 8 && idle < 10) {
+        val conn = server.accept()
+        if (conn == null) {
+            idle = idle + 1
+        } else {
+            idle = 0
+            served = served + 1
+            val head = readHttpRequest(conn)
+            if (head != null) {
+                writeAll(conn, "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Disposition: attachment; filename=\"probe.txt\"\r\nContent-Length: 19\r\nConnection: close\r\n\r\nDOWNLOAD-PROBE-DATA")
+            }
+            conn.close()
+        }
+    }
+    server.close()
+    if (served == 0) {
+        return "accept-fail"
+    }
+    return "ok"
+}
+
+fun downloadLive(filePort: Int): String {
+    val c = launchChromium(chromiumExe(), 9334)
+    if (c == null) {
+        return "skip"
+    }
+    var version = ""
+    var tries = 0
+    while (tries < 20 && version == "") {
+        val res = httpGet("127.0.0.1", 9334, "/json/version")
+        if (res != null && res.status == 200) {
+            version = res.body
+        } else {
+            sleepMs(500)
+            tries = tries + 1
+        }
+    }
+    if (version == "") {
+        c.stop()
+        return "fail:version"
+    }
+    val debug = debuggerUrl(version)
+    if (debug == null) {
+        c.stop()
+        return "fail:debugurl"
+    }
+    val ep = parseWsUrl(debug, 9334)
+    if (ep == null) {
+        c.stop()
+        return "fail:endpoint"
+    }
+    val ws = wsConnect(ep.host, ep.port, ep.path)
+    if (ws == null) {
+        c.stop()
+        return "fail:connect"
+    }
+    val engine = Engine(c, cdpConn(ws))
+    val ctx = engine.newContext()
+    if (ctx == null) {
+        engine.close()
+        c.stop()
+        return "fail:ctx"
+    }
+    val page = engine.newPage(ctx)
+    if (page == null) {
+        engine.close()
+        c.stop()
+        return "fail:page"
+    }
+    if (engine.subscribe(page, "download") == false) {
+        engine.close()
+        c.stop()
+        return "fail:sub"
+    }
+    val file = task {
+        serveDownloadFile(filePort)
+    }
+    sleepMs(200)
+    engine.goto(page, "http://127.0.0.1:$filePort/file", 8000)
+    var guid = ""
+    var polls = 0
+    while (polls < 20 && guid == "") {
+        val notes = engine.drain()
+        var i = 0
+        while (i < notes.size()) {
+            val params = parseJson(notes.get(i)).get("params")
+            if (params != null) {
+                val g = params!!.get("download")
+                if (g != null && g!!.isString()) {
+                    guid = g!!.asString()
+                }
+            }
+            i = i + 1
+        }
+        if (guid == "") {
+            sleepMs(500)
+            polls = polls + 1
+        }
+    }
+    file.await()
+    if (guid == "") {
+        engine.close()
+        c.stop()
+        echo("download live: tracked=${engine.downloads.size()}")
+        return "fail:nodownload"
+    }
+    val raw = engine.downloadBytes(guid)
+    engine.close()
+    c.stop()
+    if (raw == null) {
+        return "fail:nobytes"
+    }
+    if (Encoding.base64UrlDecode(raw) != "DOWNLOAD-PROBE-DATA") {
+        return "fail:bytes"
+    }
+    return "ok"
+}
+
+test "download: live round-trip against real Chromium" {
+    val out = downloadLive(19974)
+    echo("download live: $out")
+    assert(out == "skip" || out == "ok")
+}

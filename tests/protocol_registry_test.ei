@@ -1,6 +1,7 @@
 import { assert } from "std.core"
 import { Subscriptions } from ".browser.protocol.subscriptions"
 import { ProxyRegistry } from ".browser.protocol.registry"
+import { NetworkLogger } from ".browser.plugins.plugins"
 
 test "protocol: first subscribe is new, second is duplicate" {
     val subs = Subscriptions()
@@ -59,4 +60,11 @@ test "protocol: registry removal cascades to owned children" {
     assert(reg.contains("page-8") == false)
     assert(reg.contains("browser-1"))
     assert(reg.remove("page-7") == false)
+}
+
+test "protocol: network logger topics" {
+    assert(NetworkLogger.name() == "NetworkLogger")
+    val topics = NetworkLogger.topics()
+    assert(topics.size() == 3)
+    assert(topics.get(0) == "request")
 }

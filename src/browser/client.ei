@@ -2,16 +2,17 @@
 //
 // Owns the socket, the frame reader, id counters and the `initialize`
 // handshake. Handles (Browser, contexts, pages) delegate sends here;
-// replies are awaited by id, interleaved notifications skipped (MVP
-// drops them; subscribe dispatch lands later).
+// replies are awaited by id, interleaved notifications stash into
+// `events` for `poll()`.
 
+import { MutableList } from "std.collections"
 import { parseJson } from "std.json"
 import { WsClient, wsConnect } from ".browser.net.ws"
 import { FrameReader } from ".browser.net.reader"
 import { requestFrame, initializeRequest } from ".browser.protocol.envelope"
 import { parseWsUrl } from ".browser.chromium.cdp"
 
-type WorkerClient(val ws: WsClient, val reader: FrameReader, val protoVersion: String, var nextId: Int = 2) {
+type WorkerClient(val ws: WsClient, val reader: FrameReader, val protoVersion: String, var nextId: Int = 2, var events: MutableList<String> = MutableList<String>()) {
 
     fun version(): String {
         return this.protoVersion
@@ -38,10 +39,43 @@ type WorkerClient(val ws: WsClient, val reader: FrameReader, val protoVersion: S
                     }
                     return res!!.write()
                 }
+                if (got == null) {
+                    this.events.add(f.payload)
+                }
             }
             tries = tries + 1
         }
         return null
+    }
+
+    fun drainEvents(): List<String> {
+        val out = this.events
+        this.events = MutableList<String>()
+        return out.freeze()
+    }
+
+    fun poll(timeoutMs: Int): List<String> {
+        val out: MutableList<String> = MutableList<String>()
+        var left = timeoutMs
+        while (left > 0) {
+            val slice = if (left < 200) { left } else { 200 }
+            val f = this.reader.readFrame(slice)
+            if (f == null) {
+                left = 0
+            } else if (f.opcode == 8) {
+                this.ws.close()
+                left = 0
+            } else if (f.opcode == 1 || f.opcode == 2) {
+                val msg = parseJson(f.payload)
+                if (msg.get("id") == null) {
+                    out.add(f.payload)
+                }
+                left = left - 200
+            } else {
+                left = left - 200
+            }
+        }
+        return out.freeze()
     }
 
     fun call(method: String, params: String): String? {

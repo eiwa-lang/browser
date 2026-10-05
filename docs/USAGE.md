@@ -46,7 +46,7 @@ display in MVP, so `newContext()` throws `NoWorkerAvailable`.
 
 ## Contexts and Pages
 
-`browser.newContext(): BrowserContext` mints a context pinned to one
+`browser.newContext(storageState = null): BrowserContext` mints a context pinned to one
 worker. `ctx.newPage(): Page` mints a page under it.
 `browser.newPage(ctx = null): Page` takes an optional context — omit
 it for a page with a private context (reaped by `browser.close()`).
@@ -102,7 +102,7 @@ shortcuts take the locator explicitly:
 | `click` | `locator` / — | Click after auto-wait |
 | `fill` | `locator, value` / `value` | Fill input (replace + `input`/`change`) |
 | `typeText` | `locator, value` / `value` | Type keystrokes (append + `input`); `type` is an Eiwa keyword |
-| `press` [target] | `locator, key` / `key` | Press key (needs CDP Input) |
+| `press` | `locator, key` / `key` | Press key (single char via `insertText`, named keys via key down/up) |
 | `text` | `locator` / — | Visible text |
 | `content` | — | Full HTML (`Page` only) |
 | `attribute` | `locator, name` / `name` | Attribute value |
@@ -120,25 +120,27 @@ page.waitForUrl("**/result/**")
 
 ## Cookies and Storage
 
-Cookies and storage state live on the context [target]:
+Cookies and storage state live on the context:
 
 ```eiwa
-val all = ctx.cookies()                    // List<Cookie>
+val all = ctx.cookies()                    // List<Cookie>? (`null` on failure)
 ctx.addCookie(Cookie("sid", "abc", "shop.example.com"))
 ctx.clearCookies()
 val state = ctx.storageState()             // JSON value; app persists it
-val ctx2 = browser.newContext(storageState = state)
+val ctx2 = browser.newContext(state)       // applies the cookies
 ```
 
 `Cookie(name, value, domain = "", path = "/", expires = 0,
 httpOnly = false, secure = false, sameSite = "Lax")`. Rule A: state
-travels as a value; files are app-side only (§§14–15).
+travels as a value; files are app-side only (§§14–15). MVP state is
+cookies-only (`origins` is always `[]`; localStorage needs
+origin-by-origin injection — post-MVP).
 
 ## Network Observe
 
 Observe-only in MVP (`route` interception is post-MVP). Subscribe on
-the page — the client sends `page.subscribe` implicitly (§18)
-[target] — or once per browser via plugin:
+the page — the client sends `page.subscribe` implicitly (§18) — or
+once per browser via plugin. Callbacks fire on `poll()`:
 
 ```eiwa
 page.onRequest { request ->
@@ -147,34 +149,45 @@ page.onRequest { request ->
 page.onResponse { response ->
     Log.info { "${response.status} ${response.url}" }
 }
-browser.use(NetworkLogger)   // request/response/console
+browser.use(NetworkLogger.name(), NetworkLogger.topics())
+browser.poll()
 ```
 
 Payloads are `ObservedRequest` (`id`, `page`, `url`, `method`) and
-`ObservedResponse` (`request`, `page`, `url`, `status`).
+`ObservedResponse` (`request`, `page`, `url`, `status`). Delivery is
+poll-driven and eventually consistent: an event may land after the
+dispatch that triggered it, so keep polling until the notes arrive
+(`poll()` default 2000ms). Handler callbacks (`onRequest` etc.) live
+on the handle you registered — re-listed pages are fresh objects.
 
 ## Downloads
 
-Rule A: bytes travel through the protocol; the app saves. Subscribe
-on the page; fetch bytes from the handle (chunked for large files)
-[target]:
+Rule A: bytes travel through the protocol (base64url); the app saves.
+Subscribe on the page; fetch bytes from the handle (chunked for large
+files):
 
 ```eiwa
 page.onDownload { download ->
     // download: downloadId, fileName, mime, size
-    val bytes = download.bytes()   // small files, base64 inline
+    val bytes = download.bytes()   // small files, whole content
     fs.write("/tmp/document.pdf", bytes)
 }
+browser.poll()
 ```
+
+`download.read(offset, size)` fetches chunks. Chromium saves to the
+worker's temp dir and reports the exact path (`filePath`) on completion;
+the engine streams those bytes back.
 
 ## Plugins
 
 MVP is registration + observe-only (`NetworkLogger` on
-`request`/`response`/`console`) [target]. `Auth`/`Captcha`/`Proxy`
-providers are post-MVP.
+`request`/`response`/`console`). `Auth`/`Captcha`/`Proxy`
+providers are post-MVP. Subscribe pages before `use` (late pages
+are not auto-subscribed).
 
 ```eiwa
-browser.use(NetworkLogger)
+browser.use(NetworkLogger.name(), NetworkLogger.topics())
 browser.subscribed("NetworkLogger", "request")  // Bool
 browser.unuse("NetworkLogger")                  // Bool
 ```

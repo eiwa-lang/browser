@@ -11,7 +11,7 @@ import { FrameReader } from ".browser.net.reader"
 import { httpGet } from ".browser.net.http"
 import { debuggerUrl, parseWsUrl } from ".browser.chromium.cdp"
 
-type CdpConn(val ws: WsClient, val reader: FrameReader, val events: MutableList<String> = MutableList<String>(), var nextId: Int = 1) {
+type CdpConn(val ws: WsClient, val reader: FrameReader, var events: MutableList<String> = MutableList<String>(), var nextId: Int = 1) {
 
     fun close(): Void {
         this.ws.close()

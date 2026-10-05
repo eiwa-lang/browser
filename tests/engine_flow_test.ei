@@ -2,20 +2,72 @@ import { assert } from "std.core"
 import { parseJson } from "std.json"
 import { sleepMs } from "std.time"
 import { TCPServer, Socket } from "std.net"
+import { List, MutableList } from "std.collections"
 import { buildFrame, wsRecv, writeAll, wsConnect } from ".browser.net.ws"
 import { readHttpRequest, answerHandshake } from ".browser.net.ws_server"
 import { Chromium } from ".browser.chromium.chromium"
+import { Cookie } from ".browser.storage.cookies"
 import { cdpConn } from ".browser.chromium.connection"
-import { Engine } from ".browser.engine.engine"
+import { Engine, systemTempDir } from ".browser.engine.engine"
+import { File } from "std.fs"
+import { Encoding } from "crypto.encoding"
 
 fun stageReply(id: Int, result: String): String {
     return "{\"id\": $id, \"result\": $result}"
+}
+
+// Eventual delivery: pushed CDP events can stall behind delayed ACKs
+// (tens of ms on Linux), so accumulate across bounded drains instead
+// of asserting on a single synchronous one.
+fun drainWant(engine: Engine, want: Int): List<String> {
+    val out: MutableList<String> = MutableList<String>()
+    var tries = 0
+    while (tries < 30 && out.size() < want) {
+        val notes = engine.drain()
+        var i = 0
+        while (i < notes.size()) {
+            out.add(notes.get(i))
+            i = i + 1
+        }
+        if (out.size() < want) {
+            sleepMs(100)
+        }
+        tries = tries + 1
+    }
+    return out.freeze()
+}
+
+// Accumulate drains until some note contains the needle (fresh-event
+// marker) or the budget runs out. A stale pre-resub event satisfies a
+// bare count but never the fresh marker.
+fun drainUntil(engine: Engine, needle: String): List<String> {
+    val out: MutableList<String> = MutableList<String>()
+    var tries = 0
+    var found = false
+    while (tries < 30 && found == false) {
+        val notes = engine.drain()
+        var i = 0
+        while (i < notes.size()) {
+            out.add(notes.get(i))
+            if (notes.get(i).indexOf(needle) >= 0) {
+                found = true
+            }
+            i = i + 1
+        }
+        if (found == false) {
+            sleepMs(100)
+        }
+        tries = tries + 1
+    }
+    return out.freeze()
 }
 
 fun stageSession(sock: Socket): String {
     var open = true
     var waitPolls = 0
     var hrefPolls = 0
+    var netOn = false
+    var conCount = 0
     while (open) {
         val f = wsRecv(sock)
         if (f == null) {
@@ -55,8 +107,31 @@ fun stageSession(sock: Socket): String {
                     } else if (name == "Page.navigateToHistoryEntry") {
                         writeAll(sock, buildFrame(1, stageReply(num, "{}"), null))
                         writeAll(sock, buildFrame(1, "{\"method\": \"Page.loadEventFired\", \"params\": {}, \"sessionId\": \"S1\"}", null))
+                    } else if (name == "Input.dispatchKeyEvent" || name == "Input.insertText") {
+                        writeAll(sock, buildFrame(1, stageReply(num, "{}"), null))
+                    } else if (name == "Network.enable" || name == "Runtime.enable") {
+                        writeAll(sock, buildFrame(1, stageReply(num, "{}"), null))
+                        if (name == "Network.enable" && netOn == false) {
+                            netOn = true
+                            writeAll(sock, buildFrame(1, "{\"method\": \"Network.requestWillBeSent\", \"params\": {\"requestId\": \"req-1\", \"request\": {\"url\": \"https://example.com\", \"method\": \"GET\"}}, \"sessionId\": \"S1\"}", null))
+                            writeAll(sock, buildFrame(1, "{\"method\": \"Network.responseReceived\", \"params\": {\"requestId\": \"req-1\", \"response\": {\"url\": \"https://example.com\", \"status\": 200}}, \"sessionId\": \"S1\"}", null))
+                        } else if (name == "Runtime.enable") {
+                            conCount = conCount + 1
+                            val mark = conCount
+                            writeAll(sock, buildFrame(1, "{\"method\": \"Runtime.consoleAPICalled\", \"params\": {\"type\": \"log\", \"args\": [{\"type\": \"string\", \"value\": \"hello-$mark\"}]}, \"sessionId\": \"S1\"}", null))
+                        }
+                    } else if (name == "Browser.setDownloadBehavior") {
+                        writeAll(sock, buildFrame(1, stageReply(num, "{}"), null))
+                        writeAll(sock, buildFrame(1, "{\"method\": \"Browser.downloadWillBegin\", \"params\": {\"frameId\": \"F1\", \"guid\": \"G7\", \"url\": \"https://example.com/f.pdf\", \"suggestedFilename\": \"f.pdf\"}}", null))
+                        writeAll(sock, buildFrame(1, "{\"method\": \"Browser.downloadProgress\", \"params\": {\"guid\": \"G7\", \"totalBytes\": 8, \"receivedBytes\": 8, \"state\": \"completed\"}}", null))
+                    } else if (name == "Storage.getCookies") {
+                        writeAll(sock, buildFrame(1, stageReply(num, "{\"cookies\": [{\"name\": \"sid\", \"value\": \"abc\", \"domain\": \"shop.example.com\", \"path\": \"/\", \"expires\": 0, \"httpOnly\": true, \"secure\": false, \"sameSite\": \"Lax\"}, {\"name\": \"x\", \"value\": \"1\"}]}"), null))
+                    } else if (name == "Storage.setCookies" || name == "Storage.clearCookies") {
+                        writeAll(sock, buildFrame(1, stageReply(num, "{}"), null))
                     } else if (name == "Runtime.evaluate") {
-                        if (f.payload.indexOf("getBoundingClientRect") >= 0) {
+                        if (f.payload.indexOf("el.focus") >= 0) {
+                            writeAll(sock, buildFrame(1, stageReply(num, "{\"result\": {\"type\": \"string\", \"value\": \"ok\"}}"), null))
+                        } else if (f.payload.indexOf("getBoundingClientRect") >= 0) {
                             waitPolls = waitPolls + 1
                             if (waitPolls < 3) {
                                 writeAll(sock, buildFrame(1, stageReply(num, "{\"result\": {\"type\": \"object\", \"subtype\": \"null\"}}"), null))
@@ -232,6 +307,117 @@ fun driveInner(engine: Engine, stage: Int): String {
     if (stage == 13) {
         return "ok"
     }
+    if (engine.press(page, "css", "#q", "Enter") == false) {
+        return "no-press"
+    }
+    if (stage == 14) {
+        return "ok"
+    }
+    if (engine.press(page, "css", "#q", "a") == false) {
+        return "no-press-char"
+    }
+    if (engine.press(page, "css", "#q", "F99")) {
+        return "pressed-unknown"
+    }
+    if (stage == 15) {
+        return "ok"
+    }
+    val jar = engine.cookies(ctx)
+    if (jar == null || jar!!.size() != 2) {
+        return "no-cookies"
+    }
+    if (jar!!.get(0).name != "sid") {
+        return "bad-cookie"
+    }
+    if (stage == 16) {
+        return "ok"
+    }
+    if (engine.addCookie(ctx, Cookie("n", "v", "shop.example.com")) == false) {
+        return "no-add"
+    }
+    if (stage == 17) {
+        return "ok"
+    }
+    val state = engine.storageState(ctx)
+    if (state == null || state!!.indexOf("shop.example.com") < 0) {
+        return "no-state"
+    }
+    if (stage == 18) {
+        return "ok"
+    }
+    if (engine.clearCookies(ctx) == false) {
+        return "no-clear"
+    }
+    if (stage == 19) {
+        return "ok"
+    }
+    if (engine.subscribe(page, "request") == false) {
+        return "no-sub"
+    }
+    if (engine.subscribe(page, "response") == false) {
+        return "no-sub2"
+    }
+    if (engine.subscribe(page, "console") == false) {
+        return "no-sub3"
+    }
+    if (engine.unsubscribe(page, "console") == false) {
+        return "no-unsub"
+    }
+    val notes = drainWant(engine, 2)
+    if (notes.size() != 2) {
+        return "no-notes"
+    }
+    if (notes.get(0).indexOf("page.request") < 0) {
+        return "bad-note-req"
+    }
+    if (notes.get(1).indexOf("page.response") < 0) {
+        return "bad-note-res"
+    }
+    if (stage == 20) {
+        return "ok"
+    }
+    if (engine.subscribe(page, "console") == false) {
+        return "no-resub"
+    }
+    val notesC = drainUntil(engine, "hello-2")
+    if (notesC.size() < 1) {
+        return "no-con-note"
+    }
+    var fresh = false
+    var c = 0
+    while (c < notesC.size()) {
+        if (notesC.get(c).indexOf("page.console") >= 0 && notesC.get(c).indexOf("hello-2") >= 0) {
+            fresh = true
+        }
+        c = c + 1
+    }
+    if (fresh == false) {
+        return "bad-con-note"
+    }
+    if (engine.subscribe(page, "download") == false) {
+        return "no-sub-dl"
+    }
+    if (File.write(systemTempDir() + "/eiwa-dl-G7", "PDF-DATA") == false) {
+        return "no-file"
+    }
+    val notes2 = drainWant(engine, 1)
+    if (notes2.size() != 1) {
+        return "no-dl-note"
+    }
+    if (notes2.get(0).indexOf("page.download") < 0) {
+        return "bad-dl-note"
+    }
+    val raw = engine.downloadBytes("G7")
+    if (raw == null) {
+        return "no-bytes"
+    }
+    if (Encoding.base64UrlDecode(raw) != "PDF-DATA") {
+        return "bad-bytes"
+    }
+    File.delete(systemTempDir() + "/eiwa-dl-G7")
+    if (stage == 21) {
+        return "ok"
+    }
     if (engine.closePage(page) == false) {
         return "no-closepage"
     }
@@ -255,46 +441,59 @@ fun runStage(port: Int, stage: Int): String {
 }
 
 test "engine stages: context" {
-    assert(runStage(19901, 1) == "ok")
+    val r1 = runStage(19901, 1)
+    assert(r1 == "ok", r1)
 }
 
 test "engine stages: page" {
-    assert(runStage(19902, 2) == "ok")
+    val r2 = runStage(19902, 2)
+    assert(r2 == "ok", r2)
 }
 
 test "engine stages: navigate" {
-    assert(runStage(19903, 3) == "ok")
+    val r3 = runStage(19903, 3)
+    assert(r3 == "ok", r3)
 }
 
 test "engine stages: read and close" {
-    assert(runStage(19904, 4) == "ok")
+    val r4 = runStage(19904, 4)
+    assert(r4 == "ok", r4)
 }
 
 test "engine stages: reload" {
-    assert(runStage(19905, 5) == "ok")
+    val r5 = runStage(19905, 5)
+    assert(r5 == "ok", r5)
 }
 
 test "engine stages: history travel" {
-    assert(runStage(19906, 6) == "ok")
-    assert(runStage(19907, 7) == "ok")
+    val r6 = runStage(19906, 6)
+    assert(r6 == "ok", r6)
+    val r7 = runStage(19907, 7)
+    assert(r7 == "ok", r7)
 }
 
 test "engine stages: locator text" {
-    assert(runStage(19908, 8) == "ok")
+    val r8 = runStage(19908, 8)
+    assert(r8 == "ok", r8)
 }
 
 test "engine stages: locator actions" {
-    assert(runStage(19909, 9) == "ok")
+    val r9 = runStage(19909, 9)
+    assert(r9 == "ok", r9)
 }
 
 test "engine stages: attribute and reading" {
-    assert(runStage(19910, 10) == "ok")
-    assert(runStage(19911, 11) == "ok")
+    val r10 = runStage(19910, 10)
+    assert(r10 == "ok", r10)
+    val r11 = runStage(19911, 11)
+    assert(r11 == "ok", r11)
 }
 
 test "engine stages: waits" {
-    assert(runStage(19912, 12) == "ok")
-    assert(runStage(19913, 13) == "ok")
+    val r12 = runStage(19912, 12)
+    assert(r12 == "ok", r12)
+    val r13 = runStage(19913, 13)
+    assert(r13 == "ok", r13)
 }
 
 fun timeoutFake(port: Int): String {
@@ -390,4 +589,32 @@ fun runTimeout(port: Int): String {
 
 test "engine stages: waits time out" {
     assert(runTimeout(19914) == "ok")
+}
+
+test "engine stages: press" {
+    val r14 = runStage(19915, 14)
+    assert(r14 == "ok", r14)
+    val r15 = runStage(19916, 15)
+    assert(r15 == "ok", r15)
+}
+
+test "engine stages: cookies and state" {
+    val r16 = runStage(19917, 16)
+    assert(r16 == "ok", r16)
+    val r17 = runStage(19918, 17)
+    assert(r17 == "ok", r17)
+    val r18 = runStage(19919, 18)
+    assert(r18 == "ok", r18)
+    val r19 = runStage(19920, 19)
+    assert(r19 == "ok", r19)
+}
+
+test "engine stages: events" {
+    val r20 = runStage(19941, 20)
+    assert(r20 == "ok", r20)
+}
+
+test "engine stages: downloads" {
+    val r21 = runStage(19942, 21)
+    assert(r21 == "ok", r21)
 }

@@ -43,7 +43,7 @@ type ContextManager(
     }
 }
 
-type PageBinding(val context: String, val target: String, val session: String)
+type PageBinding(val context: String, val target: String, val session: String, val frame: String = "")
 
 type PageManager(
     val pages: MutableMap<String, PageBinding> = MutableMap<String, PageBinding>(),
@@ -71,6 +71,33 @@ type PageManager(
 
     fun binding(page: String): PageBinding? {
         return this.pages.get(page)
+    }
+
+    fun noteFrame(page: String, frame: String): Bool {
+        val current = this.pages.get(page)
+        if (current == null || frame == "") {
+            return false
+        }
+        this.pages.put(page, PageBinding(current.context, current.target, current.session, frame))
+        return true
+    }
+
+    fun pageForSession(session: String): String? {
+        for (this.pages) { entry ->
+            if (entry.value.session == session) {
+                return entry.key
+            }
+        }
+        return null
+    }
+
+    fun pageForFrame(frame: String): String? {
+        for (this.pages) { entry ->
+            if (entry.value.frame == frame) {
+                return entry.key
+            }
+        }
+        return null
     }
 
     fun drop(page: String): Bool {

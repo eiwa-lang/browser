@@ -26,7 +26,10 @@ COPY src src
 COPY tests tests
 # Live proof: run the FULL suite, including the real CDP session (goto +
 # title on example.com). A broken engine fails the image build here.
-RUN eiwa test
+# --no-cache: the incremental cache reuses wrong artifacts across test
+# files in one run (deterministic "Too many root sets" abort, e.g. in
+# automation_test.ei); tracked upstream, correct first.
+RUN eiwa test --no-cache
 # NOTE: `eiwa build -o` rejects absolute paths (mkdir -p with empty
 # operand; CLI bug filed upstream), so build relative then move.
 RUN eiwa build -o worker && mkdir -p /out && mv worker /out/worker

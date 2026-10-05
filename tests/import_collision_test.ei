@@ -1,0 +1,14 @@
+import { assert } from "std.core"
+import { matchGlob } from ".browser.engine.engine"
+import { evaluateCmd } from ".browser.protocol.commands"
+import { parseFrame } from ".browser.protocol.envelope"
+
+// Regression: engine also defines `evaluateCmd`; the explicit import
+// above must win regardless of order.
+test "import: explicit evaluateCmd wins over transitive same-name fun" {
+    assert(matchGlob("**/result/**", "https://shop.example/result/1"))
+    val evil = "() => document.querySelector(\"h1\").textContent"
+    val ev = parseFrame(evaluateCmd(10, "page-7", evil)!!)
+    assert(ev.method == "page.evaluate")
+    assert(ev.argumentString("script") == evil)
+}

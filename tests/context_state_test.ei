@@ -1,0 +1,89 @@
+import { assert } from "std.core"
+import { parseJson } from "std.json"
+import { sleepMs } from "std.time"
+import { TCPServer } from "std.net"
+import { buildFrame, wsRecv, writeAll } from ".browser.net.ws"
+import { readHttpRequest, answerHandshake } from ".browser.net.ws_server"
+import { Browser } from ".browser.browser"
+import { Cookie } from ".browser.storage.cookies"
+
+// Scripted fake worker: initialize, remote provisioning, context state.
+// Counts addCookie calls; the final tally proves state import applied.
+fun fakeStateWorker(port: Int): String {
+    val server = TCPServer()
+    if (server.bind(port) == false) {
+        return "bind-fail"
+    }
+    val conn = server.accept()
+    if (conn == null) {
+        server.close()
+        return "accept-fail"
+    }
+    val head = readHttpRequest(conn)
+    if (head == null || answerHandshake(conn, head) == false) {
+        conn.close()
+        server.close()
+        return "handshake-fail"
+    }
+    var served = 0
+    var adds = 0
+    while (served < 20) {
+        val f = wsRecv(conn)
+        if (f == null || f.opcode == 8) {
+            conn.close()
+            server.close()
+            return "adds-$adds"
+        }
+        if (f.opcode == 1 || f.opcode == 2) {
+            val msg = parseJson(f.payload)
+            val idVal = msg.get("id")
+            if (idVal != null) {
+                val id = idVal.write()
+                val methodVal = msg.get("method")
+                val method = if (methodVal != null) { methodVal.asString() } else { "" }
+                if (method == "initialize") {
+                    writeAll(conn, buildFrame(1, "{\"jsonrpc\": \"2.0\", \"id\": $id, \"result\": {\"protocol\": \"eiwa-browser\", \"version\": \"1.0\", \"capabilities\": [\"browser\"]}}", null))
+                } else if (method == "browser.newContext") {
+                    writeAll(conn, buildFrame(1, "{\"jsonrpc\": \"2.0\", \"id\": $id, \"result\": {\"context\": \"CTX-9\"}}", null))
+                } else if (method == "context.cookies") {
+                    writeAll(conn, buildFrame(1, "{\"jsonrpc\": \"2.0\", \"id\": $id, \"result\": {\"cookies\": [{\"name\": \"sid\", \"value\": \"abc\", \"domain\": \"shop.example.com\", \"path\": \"/\", \"expires\": 0, \"httpOnly\": false, \"secure\": false, \"sameSite\": \"Lax\"}]}}", null))
+                } else if (method == "context.addCookie") {
+                    adds = adds + 1
+                    writeAll(conn, buildFrame(1, "{\"jsonrpc\": \"2.0\", \"id\": $id, \"result\": {\"ok\": true}}", null))
+                } else if (method == "context.clearCookies") {
+                    writeAll(conn, buildFrame(1, "{\"jsonrpc\": \"2.0\", \"id\": $id, \"result\": {\"ok\": true}}", null))
+                } else if (method == "context.storageState") {
+                    writeAll(conn, buildFrame(1, "{\"jsonrpc\": \"2.0\", \"id\": $id, \"result\": {\"cookies\": [{\"name\": \"sid\", \"value\": \"abc\", \"domain\": \"shop.example.com\", \"path\": \"/\", \"expires\": 0, \"httpOnly\": false, \"secure\": false, \"sameSite\": \"Lax\"}], \"origins\": []}}", null))
+                } else {
+                    writeAll(conn, buildFrame(1, "{\"jsonrpc\": \"2.0\", \"id\": $id, \"error\": {\"code\": -32601, \"message\": \"unknown\", \"data\": {\"code\": \"UNKNOWN\", \"recoverable\": false}}}", null))
+                }
+            }
+        }
+        served = served + 1
+    }
+    conn.close()
+    server.close()
+    return "cap-hit"
+}
+
+test "context: cookies and state round-trip" {
+    val worker = task {
+        fakeStateWorker(19961)
+    }
+    sleepMs(150)
+    val browser = Browser(["ws://127.0.0.1:19961"], 1)
+    val ctx = browser.newContext()
+    val jar = ctx.cookies()
+    assert(jar != null, "jar")
+    assert(jar!!.size() == 1, "jarsize")
+    assert(jar!!.get(0).name == "sid", "jarname")
+    assert(ctx.addCookie(Cookie("n", "v", "shop.example.com")), "add")
+    assert(ctx.clearCookies(), "clear")
+    val state = ctx.storageState()
+    assert(state != null, "state")
+    assert(state!!.indexOf("shop.example.com") >= 0, "statebody")
+    val ctx2 = browser.newContext(state)
+    assert(ctx2.id != "", "ctx2")
+    browser.close()
+    assert(worker.await() == "adds-2", "adds")
+}

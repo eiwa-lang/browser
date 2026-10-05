@@ -5,18 +5,69 @@
 
 import { Mutex } from "std.thread"
 import { sleepMs, nowMillis } from "std.time"
-import { parseJson } from "std.json"
+import { JsonValue, jsonObject, jsonString, jsonNumber, jsonArray, parseJson } from "std.json"
+import { List, MutableList, MutableMap } from "std.collections"
+import { Env } from "std.env"
+import { File } from "std.fs"
+import { Encoding } from "crypto.encoding"
+import { notifyFrame } from ".browser.protocol.envelope"
+import { Subscriptions } from ".browser.protocol.subscriptions"
 import { Chromium } from ".browser.chromium.chromium"
 import { CdpConn, awaitEvent } from ".browser.chromium.connection"
 import { ContextManager, PageManager } from ".browser.engine.managers"
-import { createBrowserContextCmd, createTargetCtxCmd, disposeBrowserContextCmd, attachCmd, navigateCmd, evaluateCmd, closeTargetCmd, sessionCmd, historyEntryCmd, parseHistoryEntry, locatorTextScript, locatorClickScript, locatorFillScript, locatorTypeScript, locatorAttrScript, parseBrowserContextCreated, parseTargetCreated, parseAttached, evaluateValue, cdpEventMethod, cdpSessionOf } from ".browser.chromium.cdp_commands"
+import { createBrowserContextCmd, createTargetCtxCmd, disposeBrowserContextCmd, attachCmd, navigateCmd, evaluateCmd, closeTargetCmd, sessionCmd, historyEntryCmd, parseHistoryEntry, locatorTextScript, locatorClickScript, locatorFillScript, locatorTypeScript, locatorAttrScript, locatorFocusScript, inputInsertCmd, inputKeyCmd, vkFor, storageCookiesCmd, storageSetCmd, storageClearCmd, parseStorageCookies, downloadBehaviorCmd, parseBrowserContextCreated, parseTargetCreated, parseAttached, parseNavigateFrame, evaluateValue, cdpEventMethod, cdpSessionOf } from ".browser.chromium.cdp_commands"
+import { Cookie, cookieValue } from ".browser.storage.cookies"
+
+fun systemTempDir(): String {
+    val tmpdir = Env.get("TMPDIR")
+    if (tmpdir != null) {
+        return tmpdir
+    }
+    val temp = Env.get("TEMP")
+    if (temp != null) {
+        return temp
+    }
+    val tmp = Env.get("TMP")
+    if (tmp != null) {
+        return tmp
+    }
+    return "/tmp"
+}
+
+fun guessMime(fileName: String): String {
+    if (fileName.indexOf(".pdf") >= 0) {
+        return "application/pdf"
+    }
+    if (fileName.indexOf(".zip") >= 0) {
+        return "application/zip"
+    }
+    if (fileName.indexOf(".png") >= 0) {
+        return "image/png"
+    }
+    if (fileName.indexOf(".jpg") >= 0 || fileName.indexOf(".jpeg") >= 0) {
+        return "image/jpeg"
+    }
+    if (fileName.indexOf(".csv") >= 0) {
+        return "text/csv"
+    }
+    if (fileName.indexOf(".txt") >= 0) {
+        return "text/plain"
+    }
+    return "application/octet-stream"
+}
+
+type DownloadState(val path: String, val page: String, val fileName: String, val mime: String, val size: Int)
 
 type Engine(
     val chromium: Chromium,
     val conn: CdpConn,
     val contexts: ContextManager = ContextManager(),
     val pages: PageManager = PageManager(),
-    val lock: Mutex = Mutex()
+    val lock: Mutex = Mutex(),
+    val subs: Subscriptions = Subscriptions(),
+    val downloads: MutableMap<String, DownloadState> = MutableMap<String, DownloadState>(),
+    val armedDownloads: MutableList<String> = MutableList<String>(),
+    var downloadDir: String = systemTempDir()
 ) {
 
     fun newContext(): String? {
@@ -99,6 +150,10 @@ type Engine(
         val navigated = this.conn.call({ callId -> navigateCmd(callId, session, url) }, 10000)
         if (navigated == null) {
             return false
+        }
+        val frame = parseNavigateFrame(parseJson(navigated))
+        if (frame != null) {
+            this.pages.noteFrame(page, frame)
         }
         return this.awaitLoad(session, timeoutMs)
     }
@@ -282,6 +337,39 @@ type Engine(
         return this.readScript(binding.session, script)
     }
 
+    fun press(page: String, strategy: String, selector: String, key: String): Bool {
+        val out = this.lock.withLock({ this.pressKey(page, strategy, selector, key) })
+        return out
+    }
+
+    fun pressKey(page: String, strategy: String, selector: String, key: String): Bool {
+        val binding = this.pages.binding(page)
+        if (binding == null || key == "") {
+            return false
+        }
+        val session = binding.session
+        val focus = locatorFocusScript(strategy, selector)
+        if (focus == null) {
+            return false
+        }
+        val focused = this.readScript(session, focus)
+        if (focused == null || focused != "ok") {
+            return false
+        }
+        if (key.length == 1) {
+            return this.conn.call({ callId -> inputInsertCmd(callId, session, key) }, 10000) != null
+        }
+        val vk = vkFor(key)
+        if (vk == 0) {
+            return false
+        }
+        val down = this.conn.call({ callId -> inputKeyCmd(callId, session, "keyDown", key, key, vk) }, 10000)
+        if (down == null) {
+            return false
+        }
+        return this.conn.call({ callId -> inputKeyCmd(callId, session, "keyUp", key, key, vk) }, 10000) != null
+    }
+
     fun evaluate(page: String, script: String): String? {
         val out = this.lock.withLock({ this.evalRaw(page, script) })
         return out
@@ -391,6 +479,378 @@ type Engine(
         this.pages.dropByContext(ctx)
         this.conn.call({ callId -> disposeBrowserContextCmd(callId, cdpCtx) }, 10000)
         return this.contexts.drop(ctx)
+    }
+
+    fun subscribe(page: String, topic: String): Bool {
+        val out = this.lock.withLock({ this.addSubscription(page, topic) })
+        return out
+    }
+
+    fun addSubscription(page: String, topic: String): Bool {
+        val binding = this.pages.binding(page)
+        if (binding == null) {
+            return false
+        }
+        if (topic == "request" || topic == "response") {
+            if (this.conn.call({ callId -> sessionCmd(callId, binding.session, "Network.enable") }, 10000) == null) {
+                return false
+            }
+        } else if (topic == "console") {
+            if (this.conn.call({ callId -> sessionCmd(callId, binding.session, "Runtime.enable") }, 10000) == null) {
+                return false
+            }
+        } else if (topic == "download") {
+            // Download behavior is scoped per browser context: without the
+            // context id only the default context allows downloads and
+            // others get start-then-canceled.
+            val cdpCtx = this.contexts.cdpId(binding.context)
+            if (cdpCtx == null) {
+                return false
+            }
+            if (this.armDownloads(cdpCtx) == false) {
+                return false
+            }
+        } else {
+            return false
+        }
+        this.subs.subscribe(page, topic)
+        return true
+    }
+
+    fun unsubscribe(page: String, topic: String): Bool {
+        val out = this.lock.withLock({ this.dropSubscription(page, topic) })
+        return out
+    }
+
+    fun dropSubscription(page: String, topic: String): Bool {
+        return this.subs.unsubscribe(page, topic)
+    }
+
+    fun drain(): List<String> {
+        val out = this.lock.withLock({ this.drainNotifications() })
+        return out
+    }
+
+    fun drainNotifications(): List<String> {
+        var pumps = 0
+        var quiet = false
+        while (quiet == false && pumps < 10) {
+            val f = this.conn.reader.readFrame(20)
+            if (f == null) {
+                quiet = true
+            } else if (f.opcode == 1 || f.opcode == 2) {
+                this.conn.events.add(f.payload)
+            }
+            pumps = pumps + 1
+        }
+        val out: MutableList<String> = MutableList<String>()
+        var i = 0
+        while (i < this.conn.events.size()) {
+            val note = this.translateEvent(this.conn.events.get(i))
+            if (note != null) {
+                out.add(note)
+            }
+            i = i + 1
+        }
+        this.conn.events = MutableList<String>()
+        return out.freeze()
+    }
+
+    fun translateEvent(raw: String): String? {
+        val msg = parseJson(raw)
+        val methodVal = msg.get("method")
+        if (methodVal == null || methodVal!!.isString() == false) {
+            return null
+        }
+        val method = methodVal!!.asString()
+        if (method == "Browser.downloadWillBegin" || method == "Browser.downloadProgress") {
+            return this.translateDownload(msg, method)
+        }
+        val session = cdpSessionOf(msg)
+        if (session == "") {
+            return null
+        }
+        val page = this.pages.pageForSession(session)
+        if (page == null) {
+            return null
+        }
+        if (method == "Network.requestWillBeSent") {
+            if (this.subs.subscribed(page, "request") == false) {
+                return null
+            }
+            return this.requestNote(page, msg)
+        }
+        if (method == "Network.responseReceived") {
+            if (this.subs.subscribed(page, "response") == false) {
+                return null
+            }
+            return this.responseNote(page, msg)
+        }
+        if (method == "Runtime.consoleAPICalled") {
+            if (this.subs.subscribed(page, "console") == false) {
+                return null
+            }
+            return this.consoleNote(page, msg)
+        }
+        return null
+    }
+
+    fun requestNote(page: String, msg: JsonValue): String? {
+        val params = msg.get("params")
+        if (params == null) {
+            return null
+        }
+        val idVal = params!!.get("requestId")
+        val reqVal = params!!.get("request")
+        if (idVal == null || reqVal == null || idVal!!.isString() == false) {
+            return null
+        }
+        val urlVal = reqVal!!.get("url")
+        val methodVal = reqVal!!.get("method")
+        if (urlVal == null || methodVal == null || urlVal!!.isString() == false || methodVal!!.isString() == false) {
+            return null
+        }
+        val m = MutableMap<String, JsonValue>()
+        m.put("page", jsonString(page))
+        m.put("request", jsonString(idVal!!.asString()))
+        m.put("url", jsonString(urlVal!!.asString()))
+        m.put("method", jsonString(methodVal!!.asString()))
+        return notifyFrame("page.request", jsonObject(m.freeze()).write())
+    }
+
+    fun responseNote(page: String, msg: JsonValue): String? {
+        val params = msg.get("params")
+        if (params == null) {
+            return null
+        }
+        val idVal = params!!.get("requestId")
+        val resVal = params!!.get("response")
+        if (idVal == null || resVal == null || idVal!!.isString() == false) {
+            return null
+        }
+        val urlVal = resVal!!.get("url")
+        val statusVal = resVal!!.get("status")
+        if (urlVal == null || statusVal == null || urlVal!!.isString() == false || statusVal!!.isNumber() == false) {
+            return null
+        }
+        val m = MutableMap<String, JsonValue>()
+        m.put("page", jsonString(page))
+        m.put("request", jsonString(idVal!!.asString()))
+        m.put("url", jsonString(urlVal!!.asString()))
+        m.put("status", jsonNumber(statusVal!!.asNumber()))
+        return notifyFrame("page.response", jsonObject(m.freeze()).write())
+    }
+
+    fun consoleNote(page: String, msg: JsonValue): String? {
+        val params = msg.get("params")
+        if (params == null) {
+            return null
+        }
+        val typeVal = params!!.get("type")
+        if (typeVal == null || typeVal!!.isString() == false) {
+            return null
+        }
+        var text = typeVal!!.asString()
+        val argsVal = params!!.get("args")
+        if (argsVal != null && argsVal!!.isArray()) {
+            val args = argsVal!!.asArray()
+            if (args.size() > 0) {
+                val first = args.get(0).get("value")
+                if (first != null) {
+                    text = first!!.write()
+                }
+            }
+        }
+        val m = MutableMap<String, JsonValue>()
+        m.put("page", jsonString(page))
+        m.put("kind", jsonString(typeVal!!.asString()))
+        m.put("text", jsonString(text))
+        return notifyFrame("page.console", jsonObject(m.freeze()).write())
+    }
+
+    fun armDownloads(cdpCtx: String): Bool {
+        if (this.armedDownloads.contains(cdpCtx)) {
+            return true
+        }
+        if (this.downloadDir == "" || cdpCtx == "") {
+            return false
+        }
+        if (this.conn.call({ callId -> downloadBehaviorCmd(callId, this.downloadDir, cdpCtx) }, 10000) == null) {
+            return false
+        }
+        this.armedDownloads.add(cdpCtx)
+        return true
+    }
+
+    fun translateDownload(msg: JsonValue, method: String): String? {
+        val params = msg.get("params")
+        if (params == null) {
+            return null
+        }
+        val guidVal = params!!.get("guid")
+        if (guidVal == null || guidVal!!.isString() == false) {
+            return null
+        }
+        val guid = guidVal!!.asString()
+        if (method == "Browser.downloadWillBegin") {
+            val frameVal = params!!.get("frameId")
+            val nameVal = params!!.get("suggestedFilename")
+            if (nameVal == null || nameVal!!.isString() == false) {
+                return null
+            }
+            var page = ""
+            if (frameVal != null && frameVal!!.isString()) {
+                val found = this.pages.pageForFrame(frameVal!!.asString())
+                if (found != null) {
+                    page = found
+                }
+            }
+            val fileName = nameVal!!.asString()
+            this.downloads.put(guid, DownloadState(this.downloadDir + "/eiwa-dl-" + guid, page, fileName, guessMime(fileName), 0))
+            return null
+        }
+        val stateVal = params!!.get("state")
+        if (stateVal == null || stateVal!!.isString() == false || stateVal!!.asString() != "completed") {
+            if (stateVal != null && stateVal!!.isString() && stateVal!!.asString() == "canceled") {
+                this.downloads.remove(guid)
+            }
+            return null
+        }
+        val known = this.downloads.get(guid)
+        if (known == null) {
+            return null
+        }
+        val totalVal = params!!.get("totalBytes")
+        var size = known.size
+        if (totalVal != null && totalVal!!.isNumber()) {
+            size = totalVal!!.asNumber().toInt()
+        }
+        var page = known.page
+        if (page == "") {
+            for (this.subs.topics) { entry ->
+                if (entry.value.contains("download")) {
+                    page = entry.key
+                }
+            }
+        }
+        if (page == "") {
+            return null
+        }
+        // Chromium reports where it saved the file (filePath); the
+        // guid-based name is only a fallback for fakes and old builds.
+        var path = known.path
+        val pathVal = params!!.get("filePath")
+        if (pathVal != null && pathVal!!.isString() && pathVal!!.asString() != "") {
+            path = pathVal!!.asString()
+        }
+        this.downloads.put(guid, DownloadState(path, page, known.fileName, known.mime, size))
+        val m = MutableMap<String, JsonValue>()
+        m.put("page", jsonString(page))
+        m.put("download", jsonString(guid))
+        m.put("fileName", jsonString(known.fileName))
+        m.put("mime", jsonString(known.mime))
+        m.put("size", jsonNumber(size.toDouble()))
+        return notifyFrame("page.download", jsonObject(m.freeze()).write())
+    }
+
+    fun downloadBytes(guid: String): String? {
+        val out = this.lock.withLock({ this.readDownload(guid, 0, 0) })
+        return out
+    }
+
+    fun downloadChunk(guid: String, offset: Int, size: Int): String? {
+        val out = this.lock.withLock({ this.readDownload(guid, offset, size) })
+        return out
+    }
+
+    fun readDownload(guid: String, offset: Int, size: Int): String? {
+        val known = this.downloads.get(guid)
+        if (known == null) {
+            return null
+        }
+        if (File.exists(known.path) == false) {
+            return null
+        }
+        val data = File.read(known.path)
+        var start = offset
+        if (start < 0) {
+            start = 0
+        }
+        var end = data.length
+        if (size > 0 && start + size < end) {
+            end = start + size
+        }
+        if (start >= end) {
+            return null
+        }
+        return Encoding.base64Url(data.slice(start, end))
+    }
+
+    fun cookies(ctx: String): List<Cookie>? {
+        val out = this.lock.withLock({ this.readCookies(ctx) })
+        return out
+    }
+
+    fun readCookies(ctx: String): List<Cookie>? {
+        val cdpCtx = this.contexts.cdpId(ctx)
+        if (cdpCtx == null) {
+            return null
+        }
+        val raw = this.conn.call({ callId -> storageCookiesCmd(callId, cdpCtx) }, 10000)
+        if (raw == null) {
+            return null
+        }
+        return parseStorageCookies(parseJson(raw))
+    }
+
+    fun addCookie(ctx: String, cookie: Cookie): Bool {
+        val out = this.lock.withLock({ this.writeCookie(ctx, cookie) })
+        return out
+    }
+
+    fun writeCookie(ctx: String, cookie: Cookie): Bool {
+        val cdpCtx = this.contexts.cdpId(ctx)
+        if (cdpCtx == null) {
+            return false
+        }
+        return this.conn.call({ callId -> storageSetCmd(callId, cdpCtx, cookie) }, 10000) != null
+    }
+
+    fun clearCookies(ctx: String): Bool {
+        val out = this.lock.withLock({ this.dropCookies(ctx) })
+        return out
+    }
+
+    fun dropCookies(ctx: String): Bool {
+        val cdpCtx = this.contexts.cdpId(ctx)
+        if (cdpCtx == null) {
+            return false
+        }
+        return this.conn.call({ callId -> storageClearCmd(callId, cdpCtx) }, 10000) != null
+    }
+
+    fun storageState(ctx: String): String? {
+        val out = this.lock.withLock({ this.exportState(ctx) })
+        return out
+    }
+
+    fun exportState(ctx: String): String? {
+        val jar = this.readCookies(ctx)
+        if (jar == null) {
+            return null
+        }
+        val known = jar
+        val items: MutableList<JsonValue> = MutableList<JsonValue>()
+        var i = 0
+        while (i < known.size()) {
+            items.add(cookieValue(known.get(i)))
+            i = i + 1
+        }
+        val none: MutableList<JsonValue> = MutableList<JsonValue>()
+        val m = MutableMap<String, JsonValue>()
+        m.put("cookies", jsonArray(items.freeze()))
+        m.put("origins", jsonArray(none.freeze()))
+        return jsonObject(m.freeze()).write()
     }
 }
 

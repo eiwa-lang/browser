@@ -59,6 +59,12 @@ type PluginRegistry(
     }
 }
 
-fun networkLoggerTopics(): List<String> {
-    return ["request", "response"]
+object NetworkLogger {
+    fun name(): String {
+        return "NetworkLogger"
+    }
+
+    fun topics(): List<String> {
+        return ["request", "response", "console"]
+    }
 }

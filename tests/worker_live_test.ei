@@ -1,7 +1,8 @@
 import { assert } from "std.core"
-import { parseJson } from "std.json"
+import { JsonValue, parseJson } from "std.json"
 import { sleepMs } from "std.time"
 import { TCPServer, Socket } from "std.net"
+import { List, MutableList } from "std.collections"
 import { buildFrame, wsRecv, writeAll, WsClient, wsConnect } from ".browser.net.ws"
 import { FrameReader } from ".browser.net.reader"
 import { readHttpRequest, answerHandshake } from ".browser.net.ws_server"
@@ -48,6 +49,8 @@ fun liveSession(sock: Socket): String {
                     } else if (name == "Page.navigate") {
                         writeAll(sock, buildFrame(1, liveReply(num, ["frameId" of "F1"].toJson()), null))
                         writeAll(sock, buildFrame(1, "{\"method\": \"Page.loadEventFired\", \"params\": {}, \"sessionId\": \"S1\"}", null))
+                        writeAll(sock, buildFrame(1, "{\"method\": \"Network.requestWillBeSent\", \"params\": {\"requestId\": \"req-1\", \"request\": {\"url\": \"https://example.com\", \"method\": \"GET\"}}, \"sessionId\": \"S1\"}", null))
+                        writeAll(sock, buildFrame(1, "{\"method\": \"Network.responseReceived\", \"params\": {\"requestId\": \"req-1\", \"response\": {\"url\": \"https://example.com\", \"status\": 200}}, \"sessionId\": \"S1\"}", null))
                     } else if (name == "Page.reload") {
                         writeAll(sock, buildFrame(1, liveReply(num, "{}"), null))
                         writeAll(sock, buildFrame(1, "{\"method\": \"Page.loadEventFired\", \"params\": {}, \"sessionId\": \"S1\"}", null))
@@ -56,8 +59,25 @@ fun liveSession(sock: Socket): String {
                     } else if (name == "Page.navigateToHistoryEntry") {
                         writeAll(sock, buildFrame(1, liveReply(num, "{}"), null))
                         writeAll(sock, buildFrame(1, "{\"method\": \"Page.loadEventFired\", \"params\": {}, \"sessionId\": \"S1\"}", null))
+                    } else if (name == "Input.dispatchKeyEvent" || name == "Input.insertText") {
+                        writeAll(sock, buildFrame(1, liveReply(num, "{}"), null))
+                    } else if (name == "Storage.getCookies") {
+                        writeAll(sock, buildFrame(1, liveReply(num, "{\"cookies\": [{\"name\": \"sid\", \"value\": \"abc\", \"domain\": \"shop.example.com\"}]}"), null))
+                    } else if (name == "Storage.setCookies" || name == "Storage.clearCookies") {
+                        writeAll(sock, buildFrame(1, liveReply(num, "{}"), null))
+                    } else if (name == "Network.enable" || name == "Runtime.enable") {
+                        writeAll(sock, buildFrame(1, liveReply(num, "{}"), null))
+                        if (name == "Runtime.enable") {
+                            writeAll(sock, buildFrame(1, "{\"method\": \"Runtime.consoleAPICalled\", \"params\": {\"type\": \"log\", \"args\": [{\"type\": \"string\", \"value\": \"hello\"}]}, \"sessionId\": \"S1\"}", null))
+                        }
+                    } else if (name == "Browser.setDownloadBehavior") {
+                        writeAll(sock, buildFrame(1, liveReply(num, "{}"), null))
+                        writeAll(sock, buildFrame(1, "{\"method\": \"Browser.downloadWillBegin\", \"params\": {\"frameId\": \"F1\", \"guid\": \"G7\", \"url\": \"https://example.com/f.pdf\", \"suggestedFilename\": \"f.pdf\"}}", null))
+                        writeAll(sock, buildFrame(1, "{\"method\": \"Browser.downloadProgress\", \"params\": {\"guid\": \"G7\", \"totalBytes\": 8, \"receivedBytes\": 8, \"state\": \"completed\"}}", null))
                     } else if (name == "Runtime.evaluate") {
-                        if (f.payload.indexOf("getBoundingClientRect") >= 0) {
+                        if (f.payload.indexOf("el.focus") >= 0) {
+                            writeAll(sock, buildFrame(1, liveReply(num, "{\"result\": {\"type\": \"string\", \"value\": \"ok\"}}"), null))
+                        } else if (f.payload.indexOf("getBoundingClientRect") >= 0) {
                             writeAll(sock, buildFrame(1, liveReply(num, "{\"result\": {\"type\": \"string\", \"value\": \"found\"}}"), null))
                         } else if (f.payload.indexOf("window.location.href") >= 0) {
                             writeAll(sock, buildFrame(1, liveReply(num, "{\"result\": {\"type\": \"string\", \"value\": \"https://shop.example/result/1\"}}"), null))
@@ -120,25 +140,99 @@ fun buildTestEngine(port: Int): Engine? {
     return null
 }
 
-fun rpcField(ws: WsClient, frame: String, key: String): String? {
+// Notifications skipped while awaiting a reply are stashed here instead
+// of dropped, so shared-reader RPC helpers never lose interleaved notes.
+type NoteStash(var items: MutableList<String> = MutableList<String>()) {
+
+    fun put(method: String): Void {
+        this.items.add(method)
+    }
+
+    fun takeAll(): List<String> {
+        val out = this.items
+        this.items = MutableList<String>()
+        return out.freeze()
+    }
+}
+
+fun collectNotes(ws: WsClient, reader: FrameReader? = null, want: Int = 0, timeoutMs: Int = 5000, stash: NoteStash? = null): List<String> {
+    val out: MutableList<String> = MutableList<String>()
+    if (stash != null) {
+        val saved = stash.takeAll()
+        var k = 0
+        while (k < saved.size()) {
+            out.add(saved.get(k))
+            k = k + 1
+        }
+    }
+    val r = if (reader == null) { FrameReader(ws.socket, "") } else { reader }
+    var left = timeoutMs
+    var tries = 0
+    while (tries < 20 && left > 0 && (want <= 0 || out.size() < want)) {
+        val f = r.readFrame(200)
+        if (f == null) {
+            return out.freeze()
+        }
+        if (f.opcode == 1 || f.opcode == 2) {
+            val msg = parseJson(f.payload)
+            if (msg.get("id") == null) {
+                val method = msg.get("method")
+                if (method != null && method!!.isString()) {
+                    out.add(method!!.asString())
+                }
+            }
+        }
+        left = left - 200
+        tries = tries + 1
+    }
+    return out.freeze()
+}
+
+// Poll-style collection: each pass reads what arrived, then a cheap
+// read RPC triggers the worker's after-dispatch flush for stragglers.
+// Wire order is preserved across passes.
+fun collectWant(ws: WsClient, page: String, reader: FrameReader, want: Int, baseId: Int, stash: NoteStash): List<String> {
+    val out: MutableList<String> = MutableList<String>()
+    var round = 0
+    while (round < 12 && out.size() < want) {
+        val notes = collectNotes(ws, reader, want - out.size(), 1000, stash)
+        var i = 0
+        while (i < notes.size()) {
+            out.add(notes.get(i))
+            i = i + 1
+        }
+        if (out.size() < want) {
+            val pumpId = baseId + round
+            rpcOk(ws, "{\"jsonrpc\": \"2.0\", \"id\": $pumpId, \"method\": \"page.content\", \"params\": {\"page\": \"$page\"}}", reader, stash)
+        }
+        round = round + 1
+    }
+    return out.freeze()
+}
+
+fun rpcField(ws: WsClient, frame: String, key: String, reader: FrameReader? = null, stash: NoteStash? = null): String? {
     if (ws.sendText(frame) == false) {
         return null
     }
-    val reader = FrameReader(ws.socket, "")
+    val r = if (reader == null) { FrameReader(ws.socket, "") } else { reader }
     var tries = 0
     while (tries < 10) {
-        val f = reader.readFrame(2000)
+        val f = r.readFrame(2000)
         if (f == null) {
             return null
         }
         if (f.opcode == 1 || f.opcode == 2) {
             val msg = parseJson(f.payload)
-            val res = msg.get("result")
-            if (res != null) {
-                val field = res!!.get(key)
-                if (field != null && field!!.isString()) {
-                    return field!!.asString()
+            if (msg.get("id") != null) {
+                val res = msg.get("result")
+                if (res != null) {
+                    val field = res!!.get(key)
+                    if (field != null && field!!.isString()) {
+                        return field!!.asString()
+                    }
                 }
+            } else {
+                stashNote(stash, msg)
             }
         }
         tries = tries + 1
@@ -146,27 +240,41 @@ fun rpcField(ws: WsClient, frame: String, key: String): String? {
     return null
 }
 
-fun rpcOk(ws: WsClient, frame: String): Bool {
-    val got = rpcRaw(ws, frame)
+fun stashNote(stash: NoteStash? = null, msg: JsonValue? = null): Void {
+    if (stash == null || msg == null) {
+        return
+    }
+    val method = msg!!.get("method")
+    if (method != null && method!!.isString()) {
+        stash.put(method!!.asString())
+    }
+}
+
+fun rpcOk(ws: WsClient, frame: String, reader: FrameReader? = null, stash: NoteStash? = null): Bool {
+    val got = rpcRaw(ws, frame, reader, stash)
     if (got == null) {
         return false
     }
     return parseJson(got).get("result") != null
 }
 
-fun rpcRaw(ws: WsClient, frame: String): String? {
+fun rpcRaw(ws: WsClient, frame: String, reader: FrameReader? = null, stash: NoteStash? = null): String? {
     if (ws.sendText(frame) == false) {
         return null
     }
-    val reader = FrameReader(ws.socket, "")
+    val r = if (reader == null) { FrameReader(ws.socket, "") } else { reader }
     var tries = 0
     while (tries < 10) {
-        val f = reader.readFrame(2000)
+        val f = r.readFrame(2000)
         if (f == null) {
             return null
         }
         if (f.opcode == 1 || f.opcode == 2) {
-            return f.payload
+            val msg = parseJson(f.payload)
+            if (msg.get("id") != null) {
+                return f.payload
+            }
+            stashNote(stash, msg)
         }
         tries = tries + 1
     }
@@ -293,8 +401,93 @@ fun clientStage(portB: Int, stage: Int): String {
         ws.close()
         return "no-wait-url"
     }
+    if (stage == 7) {
+        ws.close()
+        return "ok-7"
+    }
+    if (rpcOk(ws, "{\"jsonrpc\": \"2.0\", \"id\": 16, \"method\": \"page.press\", \"params\": {\"page\": \"$page\", \"locator\": {\"strategy\": \"css\", \"selector\": \"#q\"}, \"key\": \"Enter\"}}") == false) {
+        ws.close()
+        return "no-press"
+    }
+    if (rpcOk(ws, "{\"jsonrpc\": \"2.0\", \"id\": 17, \"method\": \"page.press\", \"params\": {\"page\": \"$page\", \"locator\": {\"strategy\": \"css\", \"selector\": \"#q\"}, \"key\": \"a\"}}") == false) {
+        ws.close()
+        return "no-press-char"
+    }
+    if (stage == 8) {
+        ws.close()
+        return "ok-8"
+    }
+    if (rpcOk(ws, "{\"jsonrpc\": \"2.0\", \"id\": 18, \"method\": \"context.cookies\", \"params\": {\"context\": \"$ctx\"}}") == false) {
+        ws.close()
+        return "no-cookies"
+    }
+    if (rpcOk(ws, "{\"jsonrpc\": \"2.0\", \"id\": 19, \"method\": \"context.addCookie\", \"params\": {\"context\": \"$ctx\", \"cookie\": {\"name\": \"n\", \"value\": \"v\", \"domain\": \"shop.example.com\"}}}") == false) {
+        ws.close()
+        return "no-add"
+    }
+    if (rpcOk(ws, "{\"jsonrpc\": \"2.0\", \"id\": 20, \"method\": \"context.storageState\", \"params\": {\"context\": \"$ctx\"}}") == false) {
+        ws.close()
+        return "no-state"
+    }
+    if (rpcOk(ws, "{\"jsonrpc\": \"2.0\", \"id\": 21, \"method\": \"context.clearCookies\", \"params\": {\"context\": \"$ctx\"}}") == false) {
+        ws.close()
+        return "no-clear"
+    }
+    if (stage == 9) {
+        ws.close()
+        return "ok-9"
+    }
+    val shared = FrameReader(ws.socket, "")
+    val stash = NoteStash()
+    if (rpcOk(ws, "{\"jsonrpc\": \"2.0\", \"id\": 22, \"method\": \"page.subscribe\", \"params\": {\"page\": \"$page\", \"topic\": \"request\"}}", shared, stash) == false) {
+        ws.close()
+        return "no-sub"
+    }
+    if (rpcOk(ws, "{\"jsonrpc\": \"2.0\", \"id\": 23, \"method\": \"page.subscribe\", \"params\": {\"page\": \"$page\", \"topic\": \"response\"}}", shared, stash) == false) {
+        ws.close()
+        return "no-sub2"
+    }
+    if (rpcOk(ws, "{\"jsonrpc\": \"2.0\", \"id\": 24, \"method\": \"page.subscribe\", \"params\": {\"page\": \"$page\", \"topic\": \"console\"}}", shared, stash) == false) {
+        ws.close()
+        return "no-sub3"
+    }
+    // Pushed events can stall behind delayed ACKs; collectWant polls
+    // (read pass + flush-pump RPC) until both land, in wire order.
+    if (rpcOk(ws, "{\"jsonrpc\": \"2.0\", \"id\": 25, \"method\": \"page.subscribe\", \"params\": {\"page\": \"$page\", \"topic\": \"download\"}}", shared, stash) == false) {
+        ws.close()
+        return "no-sub-dl"
+    }
+    sleepMs(200)
+    val notes = collectWant(ws, page, shared, 2, 28, stash)
+    if (notes.size() != 2) {
+        var seen = ""
+        var q = 0
+        while (q < notes.size()) {
+            seen = seen + notes.get(q) + ";"
+            q = q + 1
+        }
+        ws.close()
+        return "bad-notes-size-" + notes.size().toString() + "-" + seen
+    }
+    if (notes.get(0) != "page.console" || notes.get(1) != "page.download") {
+        ws.close()
+        return "bad-notes-content-" + notes.get(0) + "-" + notes.get(1)
+    }
+    if (rpcOk(ws, "{\"jsonrpc\": \"2.0\", \"id\": 26, \"method\": \"page.goto\", \"params\": {\"page\": \"$page\", \"url\": \"https://example.com\", \"timeoutMs\": 5000}}", shared, stash) == false) {
+        ws.close()
+        return "no-goto2"
+    }
+    val notes2 = collectWant(ws, page, shared, 2, 40, stash)
+    if (notes2.size() != 2) {
+        ws.close()
+        return "bad-net-notes-size"
+    }
+    if (notes2.get(0) != "page.request" || notes2.get(1) != "page.response") {
+        ws.close()
+        return "bad-net-notes-content"
+    }
     ws.close()
-    return "ok-7"
+    return "ok-10"
 }
 
 fun workerCase(portA: Int, portB: Int, stage: Int, want: String): String {
@@ -345,4 +538,17 @@ test "worker stages: actions and reading" {
 
 test "worker stages: waits" {
     assert(workerCase(19935, 19936, 7, "ok-7") == "ok")
+}
+
+test "worker stages: press" {
+    assert(workerCase(19937, 19938, 8, "ok-8") == "ok")
+}
+
+test "worker stages: cookies and state" {
+    assert(workerCase(19939, 19940, 9, "ok-9") == "ok")
+}
+
+test "worker stages: events" {
+    val r = workerCase(19943, 19944, 10, "ok-10")
+    assert(r == "ok", r)
 }
