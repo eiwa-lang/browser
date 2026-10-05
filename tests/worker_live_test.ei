@@ -10,6 +10,7 @@ import { requestFrame } from ".browser.protocol.envelope"
 import { Chromium } from ".browser.chromium.chromium"
 import { cdpConn } from ".browser.chromium.connection"
 import { Engine } from ".browser.engine.engine"
+import { Browser } from ".browser.browser"
 import { serveOneEngine } from ".browser.worker.server"
 
 fun liveReply(id: Int, result: String): String {
@@ -551,4 +552,32 @@ test "worker stages: cookies and state" {
 test "worker stages: events" {
     val r = workerCase(19943, 19944, 10, "ok-10")
     assert(r == "ok", r)
+}
+
+test "worker stages: version, connectivity and remote close" {
+    val cdp = task {
+        liveFakeCdp(19945)
+    }
+    sleepMs(150)
+    val server = TCPServer()
+    assert(server.bind(19946))
+    val worker = task {
+        workerSide(19945, server)
+    }
+    sleepMs(150)
+    val browser = Browser(["ws://127.0.0.1:19946"], 1)
+    assert(browser.isConnected() == false, "lazy")
+    assert(browser.version() == "1.0", "version")
+    assert(browser.isConnected(), "connected")
+    val ctx = browser.newContext()
+    val pg = ctx.newPage()
+    assert(pg.goto("https://example.com"), "goto")
+    pg.close()
+    assert(ctx.pages().size() == 0, "page-gone")
+    ctx.close()
+    assert(browser.contexts().size() == 0, "ctx-gone")
+    browser.close()
+    assert(browser.isConnected() == false, "closed")
+    worker.await()
+    cdp.await()
 }

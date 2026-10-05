@@ -21,6 +21,10 @@ type BrowserContext(val browser: Browser, val id: String) : Closeable {
         return this.browser.workerOf(this.id)
     }
 
+    fun setTimeout(category: String, ms: Int): Void {
+        this.browser.setScopeTimeout(this.id, category, ms)
+    }
+
     fun cookies(): List<Cookie>? {
         val res = this.browser.callContext(this, "context.cookies", { rid ->
             contextParams(rid)

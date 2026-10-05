@@ -151,12 +151,16 @@ counters and the pending-reply map; handles delegate to it.
 - [x] `Browser.use/unuse/subscribed` + `NetworkLogger` object
       (request/response/console; subscribe pages before `use`)
       (§§20, 21, 48)
-- [ ] `setTimeout` on Browser/Context/Page + operation-level
-      `timeoutMs` (§34); `TimeoutConfig/resolveTimeout` go internal
-- [ ] `version()` / `isConnected()` (§6.1)
-- [ ] Remote cascade: `closeContext/closePage` send close frames, then
-      clear the local registry
-- [ ] Typed command errors (§33) thrown from replies (`data.code` map)
+- [x] `setTimeout` on Browser/Context/Page + operation-level
+      `timeoutMs` (§34); scopes live on Browser keyed by handle id
+      (survive re-listing); `TimeoutConfig/resolveTimeout` stay public
+      for embedders
+- [x] `version()` / `isConnected()` (§6.1; handshake version,
+      socket check, no I/O)
+- [x] Remote cascade: `closeContext/closePage` send close frames, then
+      clear the local registry (best-effort, teardown never throws)
+- [x] Typed command errors (§33) thrown from replies (`data.code` map;
+      null stays reserved for transport failure)
 
 ## Out of browser scope (separate scraper repo)
 

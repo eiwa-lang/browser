@@ -5,6 +5,7 @@ import { TCPServer } from "std.net"
 import { buildFrame, wsRecv, writeAll } from ".browser.net.ws"
 import { readHttpRequest, answerHandshake } from ".browser.net.ws_server"
 import { notifyFrame } from ".browser.protocol.envelope"
+import { UnknownBrowserError } from ".browser.protocol.errors"
 import { WorkerClient, workerConnect } from ".browser.client"
 
 // Scripted fake worker: initialize handshake, one interleaved
@@ -97,13 +98,18 @@ test "client: call skips interleaved notifications" {
     client!!.close()
 }
 
-test "client: error reply returns null" {
+test "client: error reply throws the mapped type" {
     val client = clientCase(19934)
     assert(client != null)
     // initialize + goto consume two exchanges; boom hits the error path.
     client!!.call("page.goto", "{\"page\": \"page-1\", \"url\": \"https://example.com\"}")
-    val res = client!!.call("page.boom", "{\"page\": \"page-1\"}")
-    assert(res == null)
+    var code = ""
+    try {
+        client!!.call("page.boom", "{\"page\": \"page-1\"}")
+    } catch (e: UnknownBrowserError) {
+        code = e.code
+    }
+    assert(code == "UNKNOWN")
     client!!.close()
 }
 

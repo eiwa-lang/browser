@@ -7,6 +7,7 @@
 
 import { MutableList } from "std.collections"
 import { parseJson } from "std.json"
+import { throwForReply } from ".browser.protocol.errors"
 import { WsClient, wsConnect } from ".browser.net.ws"
 import { FrameReader } from ".browser.net.reader"
 import { requestFrame, initializeRequest } from ".browser.protocol.envelope"
@@ -35,6 +36,7 @@ type WorkerClient(val ws: WsClient, val reader: FrameReader, val protoVersion: S
                 if (got != null && got!!.isNumber() && got!!.asNumber().toInt() == id) {
                     val res = msg.get("result")
                     if (res == null) {
+                        throwForReply(msg)
                         return null
                     }
                     return res!!.write()

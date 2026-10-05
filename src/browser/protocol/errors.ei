@@ -3,6 +3,8 @@
 // The wire carries a standard JSON-RPC code (Int); the Eiwa detail goes
 // in `data.code` so clients can match domain errors without parsing text.
 
+import { JsonValue } from "std.json"
+
 type BrowserError(
     val code: String,
     val message: String,
@@ -43,4 +45,84 @@ fun closedError(message: String): BrowserError {
 
 fun exhaustedError(message: String): BrowserError {
     return BrowserError("RESOURCE_EXHAUSTED", message, true)
+}
+
+// Typed command failures (§33): the worker reports errors through
+// `error.data.code`; the client throws the matching type instead of
+// returning null (null stays reserved for transport failure).
+
+type Timeout(val detail: String) : Throwable {
+    implement fun message(): String {
+        return this.detail
+    }
+}
+
+type Cancelled(val detail: String) : Throwable {
+    implement fun message(): String {
+        return this.detail
+    }
+}
+
+type ChallengeDetected(val detail: String) : Throwable {
+    implement fun message(): String {
+        return this.detail
+    }
+}
+
+type WorkerClosed(val detail: String) : Throwable {
+    implement fun message(): String {
+        return this.detail
+    }
+}
+
+type ResourceExhausted(val detail: String) : Throwable {
+    implement fun message(): String {
+        return this.detail
+    }
+}
+
+type UnknownBrowserError(val code: String, val detail: String) : Throwable {
+    implement fun message(): String {
+        return this.code + ": " + this.detail
+    }
+}
+
+fun throwForCode(code: String, message: String): Nothing {
+    if (code == "TIMEOUT") {
+        return throw Timeout(message)
+    }
+    if (code == "CANCELLED") {
+        return throw Cancelled(message)
+    }
+    if (code == "CHALLENGE") {
+        return throw ChallengeDetected(message)
+    }
+    if (code == "BROWSER_CLOSED") {
+        return throw WorkerClosed(message)
+    }
+    if (code == "RESOURCE_EXHAUSTED") {
+        return throw ResourceExhausted(message)
+    }
+    return throw UnknownBrowserError(code, message)
+}
+
+fun throwForReply(raw: JsonValue): Nothing {
+    val err = raw.get("error")
+    if (err == null) {
+        return throw UnknownBrowserError("UNKNOWN", "malformed error reply")
+    }
+    val data = err!!.get("data")
+    var code = "UNKNOWN"
+    if (data != null) {
+        val codeVal = data!!.get("code")
+        if (codeVal != null && codeVal!!.isString()) {
+            code = codeVal!!.asString()
+        }
+    }
+    var message = "command failed"
+    val messageVal = err!!.get("message")
+    if (messageVal != null && messageVal!!.isString()) {
+        message = messageVal!!.asString()
+    }
+    return throwForCode(code, message)
 }

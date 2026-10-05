@@ -8,6 +8,8 @@ import { MutableList, MutableMap } from "std.collections"
 import { Closeable } from "std.core"
 import { parseJson } from "std.json"
 import { WorkerPool } from ".browser.pool"
+import { TimeoutConfig, resolveTimeout } from ".browser.timeouts"
+import { Timeout, Cancelled, ChallengeDetected, WorkerClosed, ResourceExhausted, UnknownBrowserError } from ".browser.protocol.errors"
 import { ProxyRegistry } from ".browser.protocol.registry"
 import { Subscriptions } from ".browser.protocol.subscriptions"
 import { PluginRegistry } from ".browser.plugins.plugins"
@@ -44,8 +46,46 @@ type Browser(
     val subs: Subscriptions = Subscriptions()
     val tracked: MutableMap<String, Page> = MutableMap<String, Page>()
     val plugins: PluginRegistry = PluginRegistry()
+    val timeouts: TimeoutConfig = TimeoutConfig()
+    val scopedTimeouts: MutableMap<String, TimeoutConfig> = MutableMap<String, TimeoutConfig>()
     var nextContext: Int = 1
     var nextPage: Int = 1
+
+    fun setTimeout(category: String, ms: Int): Void {
+        this.timeouts.set(category, ms)
+    }
+
+    fun setScopeTimeout(id: String, category: String, ms: Int): Void {
+        val known = this.scopedTimeouts.get(id)
+        if (known != null) {
+            known.set(category, ms)
+            return
+        }
+        val cfg = TimeoutConfig()
+        cfg.set(category, ms)
+        this.scopedTimeouts.put(id, cfg)
+    }
+
+    // Operation timeout wins when positive; otherwise the most
+    // specific scope wins (page, context, browser), else the builtin
+    // default. Scopes live on the browser keyed by handle id, so they
+    // survive re-listing pages and contexts.
+    fun effTimeout(page: Page, category: String, opMs: Int): Int {
+        if (opMs > 0) {
+            return opMs
+        }
+        val scopes: MutableList<TimeoutConfig> = MutableList<TimeoutConfig>()
+        val pageCfg = this.scopedTimeouts.get(page.id)
+        if (pageCfg != null) {
+            scopes.add(pageCfg)
+        }
+        val ctxCfg = this.scopedTimeouts.get(page.context)
+        if (ctxCfg != null) {
+            scopes.add(ctxCfg)
+        }
+        scopes.add(this.timeouts)
+        return resolveTimeout(category, scopes.freeze())
+    }
 
     fun newContext(storageState: String? = null): BrowserContext {
         if (this.headless == false) {
@@ -116,6 +156,13 @@ type Browser(
     }
 
     fun closePage(id: String): Bool {
+        val known = this.tracked.get(id)
+        if (known != null) {
+            val rid = this.remotePage.get(id)
+            if (rid != null) {
+                this.sendRemote(known.context, "page.close", "{\"page\": \"$rid\"}")
+            }
+        }
         this.tracked.remove(id)
         this.subs.dropPage(id)
         return this.registry.remove(id)
@@ -125,10 +172,18 @@ type Browser(
         val kids = this.registry.childrenOf(id)
         var i = 0
         while (i < kids.size()) {
+            val rid = this.remotePage.get(kids.get(i))
+            if (rid != null) {
+                this.sendRemote(id, "page.close", "{\"page\": \"$rid\"}")
+            }
             this.remotePage.remove(kids.get(i))
             this.tracked.remove(kids.get(i))
             this.subs.dropPage(kids.get(i))
             i = i + 1
+        }
+        val rctx = this.remoteCtx.get(id)
+        if (rctx != null) {
+            this.sendRemote(id, "context.close", "{\"context\": \"$rctx\"}")
         }
         this.remoteCtx.remove(id)
         val unpinned = this.pinned.remove(id) != null
@@ -276,6 +331,44 @@ type Browser(
             }
         }
         return null
+    }
+
+    fun version(): String? {
+        var i = 0
+        while (i < this.workers.size()) {
+            val client = this.clientFor(this.workers.get(i))
+            if (client != null) {
+                return client.version()
+            }
+            i = i + 1
+        }
+        return null
+    }
+
+    fun isConnected(): Bool {
+        for (this.clients) { entry ->
+            if (entry.value.ws.closed == false) {
+                return true
+            }
+        }
+        return false
+    }
+
+    // Best-effort remote send for teardown: failures mean the worker is
+    // already gone, so errors are swallowed and local state drops anyway.
+    fun sendRemote(ctx: String, method: String, params: String): Void {
+        val url = this.pinned.get(ctx)
+        if (url == null) {
+            return
+        }
+        val client = this.clientFor(url)
+        if (client == null) {
+            return
+        }
+        try {
+            client.call(method, params)
+        } catch (e: Timeout | Cancelled | ChallengeDetected | WorkerClosed | ResourceExhausted | UnknownBrowserError) {
+        }
     }
 
     fun subscribePage(page: Page, topic: String): Bool {

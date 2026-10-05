@@ -61,7 +61,7 @@ type Locator(val strategy: String, val selector: String, val page: Page? = null)
         return p.attribute(this, name)
     }
 
-    fun waitFor(timeoutMs: Int = 30000): Bool {
+    fun waitFor(timeoutMs: Int = 0): Bool {
         val p = this.page
         if (p == null) {
             return false

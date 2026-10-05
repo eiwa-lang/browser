@@ -100,6 +100,10 @@ type Page(
         return Locator(parsed.strategy, parsed.selector, this)
     }
 
+    fun setTimeout(category: String, ms: Int): Void {
+        this.browser.setScopeTimeout(this.id, category, ms)
+    }
+
     fun text(loc: Locator? = null): String? {
         if (loc == null) {
             return this.readTextResult(this.browser.callPage(this, "page.text", { rid ->
@@ -123,30 +127,34 @@ type Page(
         return t!!.asString()
     }
 
-    fun goto(url: String, waitUntil: String = "load", timeoutMs: Int = 30000): Bool {
+    fun goto(url: String, waitUntil: String = "load", timeoutMs: Int = 0): Bool {
+        val ms = this.browser.effTimeout(this, "navigationTimeout", timeoutMs)
         val res = this.browser.callPage(this, "page.goto", { rid ->
-            gotoParams(rid, url, waitUntil, timeoutMs)
+            gotoParams(rid, url, waitUntil, ms)
         })
         return res != null
     }
 
-    fun reload(timeoutMs: Int = 30000): Bool {
+    fun reload(timeoutMs: Int = 0): Bool {
+        val ms = this.browser.effTimeout(this, "navigationTimeout", timeoutMs)
         val res = this.browser.callPage(this, "page.reload", { rid ->
-            timeoutParams(rid, timeoutMs)
+            timeoutParams(rid, ms)
         })
         return res != null
     }
 
-    fun goBack(timeoutMs: Int = 30000): Bool {
+    fun goBack(timeoutMs: Int = 0): Bool {
+        val ms = this.browser.effTimeout(this, "navigationTimeout", timeoutMs)
         val res = this.browser.callPage(this, "page.goBack", { rid ->
-            timeoutParams(rid, timeoutMs)
+            timeoutParams(rid, ms)
         })
         return res != null
     }
 
-    fun goForward(timeoutMs: Int = 30000): Bool {
+    fun goForward(timeoutMs: Int = 0): Bool {
+        val ms = this.browser.effTimeout(this, "navigationTimeout", timeoutMs)
         val res = this.browser.callPage(this, "page.goForward", { rid ->
-            timeoutParams(rid, timeoutMs)
+            timeoutParams(rid, ms)
         })
         return res != null
     }
@@ -217,20 +225,22 @@ type Page(
         return parseJson(res)
     }
 
-    fun waitFor(selector: String, timeoutMs: Int = 30000): Bool {
+    fun waitFor(selector: String, timeoutMs: Int = 0): Bool {
         return this.waitForLocator(this.locator(selector), timeoutMs)
     }
 
-    fun waitForLocator(loc: Locator, timeoutMs: Int = 30000): Bool {
+    fun waitForLocator(loc: Locator, timeoutMs: Int = 0): Bool {
+        val ms = this.browser.effTimeout(this, "actionTimeout", timeoutMs)
         val res = this.browser.callPage(this, "page.waitFor", { rid ->
-            locatorTimeoutParams(rid, loc, timeoutMs)
+            locatorTimeoutParams(rid, loc, ms)
         })
         return res != null
     }
 
-    fun waitForUrl(pattern: String, timeoutMs: Int = 30000): Bool {
+    fun waitForUrl(pattern: String, timeoutMs: Int = 0): Bool {
+        val ms = this.browser.effTimeout(this, "navigationTimeout", timeoutMs)
         val res = this.browser.callPage(this, "page.waitForUrl", { rid ->
-            patternParams(rid, pattern, timeoutMs)
+            patternParams(rid, pattern, ms)
         })
         return res != null
     }

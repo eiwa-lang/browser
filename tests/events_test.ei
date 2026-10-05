@@ -59,6 +59,8 @@ fun fakeEventsWorker(port: Int): String {
                     writeAll(conn, buildFrame(1, "{\"jsonrpc\": \"2.0\", \"id\": $id, \"result\": {\"ok\": true}}", null))
                 } else if (method == "download.bytes" || method == "artifact.read") {
                     writeAll(conn, buildFrame(1, "{\"jsonrpc\": \"2.0\", \"id\": $id, \"result\": {\"bytes\": \"aGk=\"}}", null))
+                } else if (method == "page.content") {
+                    writeAll(conn, buildFrame(1, "{\"jsonrpc\": \"2.0\", \"id\": $id, \"result\": {\"html\": \"<h1>H</h1>\"}}", null))
                 } else {
                     writeAll(conn, buildFrame(1, "{\"jsonrpc\": \"2.0\", \"id\": $id, \"error\": {\"code\": -32601, \"message\": \"unknown\", \"data\": {\"code\": \"UNKNOWN\", \"recoverable\": false}}}", null))
                 }

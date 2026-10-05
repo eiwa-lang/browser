@@ -138,3 +138,19 @@ test "browser: use closes everything at block end" {
     }
     assert(b.contexts().size() == 0)
 }
+
+test "browser: timeout scopes resolve most-specific first" {
+    val b = Browser(["ws://a:8080"], 8)
+    b.setTimeout("navigationTimeout", 15000)
+    val ctx = b.newContext()
+    ctx.setTimeout("actionTimeout", 5000)
+    val page = ctx.newPage()
+    page.setTimeout("navigationTimeout", 7000)
+    assert(b.effTimeout(page, "navigationTimeout", 0) == 7000, "page-scope")
+    assert(b.effTimeout(page, "navigationTimeout", 10000) == 10000, "op-wins")
+    assert(b.effTimeout(page, "actionTimeout", 0) == 5000, "ctx-scope")
+    assert(b.effTimeout(page, "evaluationTimeout", 0) == 30000, "builtin-default")
+    val relisted = ctx.pages().get(0)
+    assert(b.effTimeout(relisted, "navigationTimeout", 0) == 7000, "survives-relist")
+    b.close()
+}

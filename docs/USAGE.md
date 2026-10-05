@@ -58,7 +58,14 @@ val worker = ctx.worker()       // pinned worker URL, String?
 ```
 
 All three handles implement `Closeable`; prefer `use` over manual
-`close`.
+`close`. Closing cascades remotely: `closePage`/`closeContext` send
+their remote close frames first (best-effort), then drop local state;
+`browser.close()` drains every context, then the sockets.
+
+```eiwa
+browser.version()      // worker protocol version, String? (null when unreachable)
+browser.isConnected()  // any live worker socket, no I/O
+```
 
 ## Navigation
 
@@ -206,6 +213,12 @@ ctx.setTimeout("actionTimeout", 5000)
 page.goto("https://example.com", timeoutMs = 10000)  // operation wins
 ```
 
+Omit `timeoutMs` (or pass 0) to resolve scopes; an explicit positive
+value always wins. Scopes live on the browser keyed by handle id, so
+they survive re-listing pages and contexts. Navigation operations
+(`goto`, `reload`, `goBack`, `goForward`, `waitForUrl`) resolve
+`navigationTimeout`; waits resolve `actionTimeout`.
+
 Categories: `defaultTimeout`, `navigationTimeout`, `actionTimeout`,
 `evaluationTimeout`, `downloadTimeout` (`challengeTimeout` post-MVP).
 
@@ -213,15 +226,21 @@ Categories: `defaultTimeout`, `navigationTimeout`, `actionTimeout`,
 
 Structured errors mapped to standard JSON-RPC codes (`data.code`
 carries the Eiwa code). Command failures throw the matching typed
-error (§33) [target: full typed mapping lands with transport]:
+error (§33):
 
-| `data.code` | Meaning | Recoverable |
-|-------------|---------|-------------|
-| `TIMEOUT` | Operation timed out | true |
-| `CANCELLED` | Cancelled via `cancel` notification | false |
-| `CHALLENGE` | Challenge detected (post-MVP handling) | false |
-| `BROWSER_CLOSED` | Worker/socket died | false |
-| `RESOURCE_EXHAUSTED` | Worker full, try next | true |
+| `data.code` | Meaning | Recoverable | Thrown as |
+|-------------|---------|-------------|-----------|
+| `TIMEOUT` | Operation timed out | true | `Timeout` |
+| `CANCELLED` | Cancelled via `cancel` notification | false | `Cancelled` |
+| `CHALLENGE` | Challenge detected (post-MVP handling) | false | `ChallengeDetected` |
+| `BROWSER_CLOSED` | Worker/socket died | false | `WorkerClosed` |
+| `RESOURCE_EXHAUSTED` | Worker full, try next | true | `ResourceExhausted` |
+
+Unknown codes throw `UnknownBrowserError(code, detail)`. `null`
+results stay reserved for transport failure (no reply); server-reported
+failures always throw. Teardown (`closePage`/`closeContext`/`close`)
+sends remote close frames best-effort and never throws: a dead worker
+just drops local state.
 
 ## Running the Worker
 
