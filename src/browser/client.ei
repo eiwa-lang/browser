@@ -7,6 +7,7 @@
 
 import { MutableList } from "std.collections"
 import { parseJson } from "std.json"
+import { nowMillis } from "std.time"
 import { throwForReply } from ".browser.protocol.errors"
 import { WsClient, wsConnect } from ".browser.net.ws"
 import { FrameReader } from ".browser.net.reader"
@@ -19,18 +20,20 @@ type WorkerClient(val ws: WsClient, val reader: FrameReader, val protoVersion: S
         return this.protoVersion
     }
 
-    fun awaitReply(id: Int): String? {
-        var tries = 0
-        while (tries < 10) {
-            val f = this.reader.readFrame(2000)
-            if (f == null) {
+    fun awaitReply(id: Int, timeoutMs: Int = 30000): String? {
+        val end = nowMillis() + timeoutMs
+        while (nowMillis() < end) {
+            val left = end - nowMillis()
+            if (left <= 0) {
                 return null
             }
-            if (f.opcode == 8) {
+            val slice = if (left < 2000) { left } else { 2000 }
+            val f = this.reader.readFrame(slice)
+            if (f == null) {
+            } else if (f.opcode == 8) {
                 this.ws.close()
                 return null
-            }
-            if (f.opcode == 1 || f.opcode == 2) {
+            } else if (f.opcode == 1 || f.opcode == 2) {
                 val msg = parseJson(f.payload)
                 val got = msg.get("id")
                 if (got != null && got!!.isNumber() && got!!.asNumber().toInt() == id) {
@@ -45,7 +48,6 @@ type WorkerClient(val ws: WsClient, val reader: FrameReader, val protoVersion: S
                     this.events.add(f.payload)
                 }
             }
-            tries = tries + 1
         }
         return null
     }
@@ -80,13 +82,13 @@ type WorkerClient(val ws: WsClient, val reader: FrameReader, val protoVersion: S
         return out.freeze()
     }
 
-    fun call(method: String, params: String): String? {
+    fun call(method: String, params: String, timeoutMs: Int = 30000): String? {
         val id = this.nextId
         this.nextId = this.nextId + 1
         if (this.ws.sendText(requestFrame(id, method, params)) == false) {
             return null
         }
-        return this.awaitReply(id)
+        return this.awaitReply(id, timeoutMs)
     }
 
     fun close(): Void {

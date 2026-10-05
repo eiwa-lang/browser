@@ -1,6 +1,7 @@
 import { assert } from "std.core"
 import { parseJson } from "std.json"
 import { Browser } from ".browser.browser"
+import { cssToXpath, cssStep, UnsupportedSelector } from ".browser.locator.locator"
 import { matchGlob } from ".browser.engine.engine"
 import { css, xpath, textSelector, roleSelector, parseLocator } from ".browser.locator.locator"
 import { TimeoutConfig, builtinTimeout, resolveTimeout } from ".browser.timeouts"
@@ -115,6 +116,58 @@ test "automation: page locator binds strategy and page" {
 
 test "automation: unbound locator has no text" {
     assert(parseLocator("h1").text() == null)
+}
+
+test "automation: css to xpath conversion" {
+    assert(cssStep("div") == "div")
+    assert(cssStep("div.quote") == "div[@class='quote']")
+    assert(cssStep(".tag") == "*[@class='tag']")
+    assert(cssStep("#main") == "*[@id='main']")
+    assert(cssStep("a.link.external") == "a[@class='link'][@class='external']")
+    assert(cssStep("") == null)
+    assert(cssStep("div span") == null)
+    assert(cssStep("a[href]") == null)
+    assert(cssStep("div>p") == null)
+    assert(cssStep("a'b") == null)
+    assert(cssToXpath("div.quote") == "//div[@class='quote']")
+    assert(cssToXpath("li.next a") == "//li[@class='next']//a")
+    assert(cssToXpath("  div.quote  ") == "//div[@class='quote']")
+    assert(cssToXpath("") == null)
+    assert(cssToXpath("div[data-x]") == null)
+}
+
+test "automation: nth first within exists" {
+    val third = parseLocator("div.quote").nth(3)
+    assert(third.strategy == "xpath")
+    assert(third.selector == "(//div[@class='quote'])[3]")
+    val first = parseLocator("div.quote").first()
+    assert(first.selector == "(//div[@class='quote'])[1]")
+    val scoped = parseLocator("div.quote").nth(2).within("span.text")
+    assert(scoped.selector == "(//div[@class='quote'])[2]//span[@class='text']")
+    val chained = parseLocator("ul.pager").within("li.next a")
+    assert(chained.selector == "//ul[@class='pager']//li[@class='next']//a")
+    assert(parseLocator("h1").exists() == false)
+    var threw = ""
+    try {
+        parseLocator("div.quote").nth(0)
+    } catch (e: UnsupportedSelector) {
+        threw = "nth-zero"
+    }
+    assert(threw == "nth-zero")
+    threw = ""
+    try {
+        parseLocator("text=Buy").nth(1)
+    } catch (e: UnsupportedSelector) {
+        threw = "nth-text"
+    }
+    assert(threw == "nth-text")
+    threw = ""
+    try {
+        parseLocator("div[data-x]").nth(1)
+    } catch (e: UnsupportedSelector) {
+        threw = "nth-rich"
+    }
+    assert(threw == "nth-rich")
 }
 
 // Regression: engine also defines `evaluateCmd`; the explicit import above must win regardless of order.

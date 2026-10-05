@@ -207,20 +207,26 @@ fun engineDispatch(engine: Engine, raw: String): String {
     if (rpc.method == "page.text") {
         val pageArg = rpc.argumentString("page")
         val locArg = rpc.argument("locator")
-        var text: String? = null
         if (locArg != null) {
             val st = locArg!!.get("strategy")
             val se = locArg!!.get("selector")
-            if (st != null && se != null && st!!.isString() && se!!.isString()) {
-                text = engine.textByLocator(pageArg, st!!.asString(), se!!.asString())
+            if (st == null || se == null || st!!.isString() == false || se!!.isString() == false) {
+                return engineFailed(rpc.id, "bad locator")
             }
-        } else {
-            text = engine.text(pageArg)
+            if (engine.hasPage(pageArg) == false) {
+                return engineFailed(rpc.id, "unknown page")
+            }
+            val text = engine.textByLocator(pageArg, st!!.asString(), se!!.asString())
+            if (text == null) {
+                return okResult(rpc.id)
+            }
+            return strResult(rpc.id, "text", text)
         }
+        val text = engine.text(pageArg)
         if (text == null) {
             return engineFailed(rpc.id, "unknown page")
         }
-        return strResult(rpc.id, "text", text!!)
+        return strResult(rpc.id, "text", text)
     }
     if (rpc.method == "page.click") {
         if (engine.click(rpc.argumentString("page"), locatorParam(rpc, "strategy"), locatorParam(rpc, "selector"))) {
@@ -247,9 +253,13 @@ fun engineDispatch(engine: Engine, raw: String): String {
         return engineFailed(rpc.id, "press failed")
     }
     if (rpc.method == "page.attribute") {
-        val attr = engine.attribute(rpc.argumentString("page"), locatorParam(rpc, "strategy"), locatorParam(rpc, "selector"), rpc.argumentString("name"))
-        if (attr == null) {
+        val pageArg = rpc.argumentString("page")
+        if (engine.hasPage(pageArg) == false) {
             return engineFailed(rpc.id, "unknown page")
+        }
+        val attr = engine.attribute(pageArg, locatorParam(rpc, "strategy"), locatorParam(rpc, "selector"), rpc.argumentString("name"))
+        if (attr == null) {
+            return okResult(rpc.id)
         }
         return strResult(rpc.id, "value", attr)
     }

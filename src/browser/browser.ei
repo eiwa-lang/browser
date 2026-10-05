@@ -268,7 +268,7 @@ type Browser(
         return idVal!!.asString()
     }
 
-    fun callPage(page: Page, method: String, makeParams: (String) -> String): String? {
+    fun callPage(page: Page, method: String, makeParams: (String) -> String, timeoutMs: Int = 30000): String? {
         val rid = this.provisionPage(page)
         if (rid == null) {
             return null
@@ -281,14 +281,14 @@ type Browser(
         if (client == null) {
             return null
         }
-        val res = client.call(method, makeParams(rid))
+        val res = client.call(method, makeParams(rid), timeoutMs)
         if (res == null && client.ws.closed) {
             this.pool.markDead(url)
         }
         return res
     }
 
-    fun callContext(ctx: BrowserContext, method: String, makeParams: (String) -> String): String? {
+    fun callContext(ctx: BrowserContext, method: String, makeParams: (String) -> String, timeoutMs: Int = 30000): String? {
         val rid = this.provisionCtx(ctx.id)
         if (rid == null) {
             return null
@@ -301,7 +301,7 @@ type Browser(
         if (client == null) {
             return null
         }
-        val res = client.call(method, makeParams(rid))
+        val res = client.call(method, makeParams(rid), timeoutMs)
         if (res == null && client.ws.closed) {
             this.pool.markDead(url)
         }

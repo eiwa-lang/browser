@@ -131,7 +131,7 @@ type Page(
         val ms = this.browser.effTimeout(this, "navigationTimeout", timeoutMs)
         val res = this.browser.callPage(this, "page.goto", { rid ->
             gotoParams(rid, url, waitUntil, ms)
-        })
+        }, ms + 5000)
         return res != null
     }
 
@@ -139,7 +139,7 @@ type Page(
         val ms = this.browser.effTimeout(this, "navigationTimeout", timeoutMs)
         val res = this.browser.callPage(this, "page.reload", { rid ->
             timeoutParams(rid, ms)
-        })
+        }, ms + 5000)
         return res != null
     }
 
@@ -147,7 +147,7 @@ type Page(
         val ms = this.browser.effTimeout(this, "navigationTimeout", timeoutMs)
         val res = this.browser.callPage(this, "page.goBack", { rid ->
             timeoutParams(rid, ms)
-        })
+        }, ms + 5000)
         return res != null
     }
 
@@ -155,7 +155,7 @@ type Page(
         val ms = this.browser.effTimeout(this, "navigationTimeout", timeoutMs)
         val res = this.browser.callPage(this, "page.goForward", { rid ->
             timeoutParams(rid, ms)
-        })
+        }, ms + 5000)
         return res != null
     }
 
@@ -233,7 +233,7 @@ type Page(
         val ms = this.browser.effTimeout(this, "actionTimeout", timeoutMs)
         val res = this.browser.callPage(this, "page.waitFor", { rid ->
             locatorTimeoutParams(rid, loc, ms)
-        })
+        }, ms + 5000)
         return res != null
     }
 
@@ -241,7 +241,7 @@ type Page(
         val ms = this.browser.effTimeout(this, "navigationTimeout", timeoutMs)
         val res = this.browser.callPage(this, "page.waitForUrl", { rid ->
             patternParams(rid, pattern, ms)
-        })
+        }, ms + 5000)
         return res != null
     }
 

@@ -99,6 +99,11 @@ type Engine(
         return out
     }
 
+    fun hasPage(page: String): Bool {
+        val out = this.lock.withLock({ this.pages.binding(page) != null })
+        return out
+    }
+
     fun createPage(ctx: String): String? {
         val cdpCtx = this.contexts.cdpId(ctx)
         if (cdpCtx == null) {

@@ -76,7 +76,9 @@ fun liveSession(sock: Socket): String {
                         writeAll(sock, buildFrame(1, "{\"method\": \"Browser.downloadWillBegin\", \"params\": {\"frameId\": \"F1\", \"guid\": \"G7\", \"url\": \"https://example.com/f.pdf\", \"suggestedFilename\": \"f.pdf\"}}", null))
                         writeAll(sock, buildFrame(1, "{\"method\": \"Browser.downloadProgress\", \"params\": {\"guid\": \"G7\", \"totalBytes\": 8, \"receivedBytes\": 8, \"state\": \"completed\"}}", null))
                     } else if (name == "Runtime.evaluate") {
-                        if (f.payload.indexOf("el.focus") >= 0) {
+                        if (f.payload.indexOf("nomatch") >= 0) {
+                            writeAll(sock, buildFrame(1, liveReply(num, "{\"result\": {\"type\": \"object\", \"subtype\": \"null\", \"value\": null}}"), null))
+                        } else if (f.payload.indexOf("el.focus") >= 0) {
                             writeAll(sock, buildFrame(1, liveReply(num, "{\"result\": {\"type\": \"string\", \"value\": \"ok\"}}"), null))
                         } else if (f.payload.indexOf("getBoundingClientRect") >= 0) {
                             writeAll(sock, buildFrame(1, liveReply(num, "{\"result\": {\"type\": \"string\", \"value\": \"found\"}}"), null))
@@ -578,6 +580,40 @@ test "worker stages: version, connectivity and remote close" {
     assert(browser.contexts().size() == 0, "ctx-gone")
     browser.close()
     assert(browser.isConnected() == false, "closed")
+    worker.await()
+    cdp.await()
+}
+
+test "worker: missing locator reads succeed empty" {
+    val cdp = task {
+        liveFakeCdp(19947)
+    }
+    sleepMs(150)
+    val server = TCPServer()
+    assert(server.bind(19948))
+    val worker = task {
+        workerSide(19947, server)
+    }
+    sleepMs(150)
+    val ws = wsConnectRetry(19948, "/")
+    assert(ws != null, "conn")
+    val ctx = rpcField(ws!!, requestFrame(1, "browser.newContext", "{}"), "context")
+    assert(ctx != null, "ctx")
+    val page = rpcField(ws!!, "{\"jsonrpc\": \"2.0\", \"id\": 2, \"method\": \"context.newPage\", \"params\": {\"context\": \"$ctx\"}}", "page")
+    assert(page != null, "page")
+    assert(rpcOk(ws!!, "{\"jsonrpc\": \"2.0\", \"id\": 3, \"method\": \"page.goto\", \"params\": {\"page\": \"$page\", \"url\": \"https://example.com\", \"timeoutMs\": 5000}}"), "goto")
+    val missText = rpcRaw(ws!!, "{\"jsonrpc\": \"2.0\", \"id\": 4, \"method\": \"page.text\", \"params\": {\"page\": \"$page\", \"locator\": {\"strategy\": \"css\", \"selector\": \".nomatch\"}}}")
+    assert(missText != null, "miss-text-reply")
+    assert(parseJson(missText!!).get("result") != null, "miss-text-ok")
+    assert(parseJson(missText!!).get("error") == null, "miss-text-no-error")
+    val missAttr = rpcRaw(ws!!, "{\"jsonrpc\": \"2.0\", \"id\": 5, \"method\": \"page.attribute\", \"params\": {\"page\": \"$page\", \"locator\": {\"strategy\": \"css\", \"selector\": \"a.nomatch\"}, \"name\": \"href\"}}")
+    assert(missAttr != null, "miss-attr-reply")
+    assert(parseJson(missAttr!!).get("result") != null, "miss-attr-ok")
+    assert(parseJson(missAttr!!).get("error") == null, "miss-attr-no-error")
+    val badPage = rpcRaw(ws!!, "{\"jsonrpc\": \"2.0\", \"id\": 6, \"method\": \"page.text\", \"params\": {\"page\": \"page-404\", \"locator\": {\"strategy\": \"css\", \"selector\": \"h1\"}}}")
+    assert(badPage != null, "bad-page-reply")
+    assert(parseJson(badPage!!).get("error") != null, "bad-page-still-errors")
+    ws!!.close()
     worker.await()
     cdp.await()
 }

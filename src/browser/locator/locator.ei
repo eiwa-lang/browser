@@ -13,6 +13,56 @@ type Locator(val strategy: String, val selector: String, val page: Page? = null)
         return locatorValue(this).write()
     }
 
+    // Positional match: the n-th match in document order (1-based),
+    // as an XPath the engine already evaluates. CSS input is limited
+    // to tag/class/id descendant chains; anything else (or text/role
+    // strategies) throws instead of guessing.
+    fun nth(n: Int): Locator {
+        if (n < 1) {
+            return throw UnsupportedSelector("nth requires n >= 1")
+        }
+        if (this.strategy == "xpath") {
+            return Locator("xpath", "(" + this.selector + ")[$n]", this.page)
+        }
+        if (this.strategy == "css") {
+            val xp = cssToXpath(this.selector)
+            if (xp == null) {
+                return throw UnsupportedSelector("css too rich for nth: " + this.selector)
+            }
+            return Locator("xpath", "($xp)[$n]", this.page)
+        }
+        return throw UnsupportedSelector("nth supports css/xpath, got: " + this.strategy)
+    }
+
+    fun first(): Locator {
+        return this.nth(1)
+    }
+
+    // Relative selection: child (css chain, or /-rooted xpath)
+    // scoped under this locator. Pure string surgery; the engine
+    // evaluates the resulting absolute XPath.
+    fun within(child: String): Locator {
+        val steps = childSteps(child)
+        if (steps == null) {
+            return throw UnsupportedSelector("within needs simple css or xpath, got: " + child)
+        }
+        if (this.strategy == "xpath") {
+            return Locator("xpath", this.selector + "//" + steps, this.page)
+        }
+        if (this.strategy == "css") {
+            val base = cssToXpath(this.selector)
+            if (base == null) {
+                return throw UnsupportedSelector("within needs simple css, got: " + this.selector)
+            }
+            return Locator("xpath", base + "//" + steps, this.page)
+        }
+        return throw UnsupportedSelector("within supports css/xpath, got: " + this.strategy)
+    }
+
+    fun exists(): Bool {
+        return this.text() != null
+    }
+
     fun text(): String? {
         val p = this.page
         if (p == null) {
@@ -107,4 +157,136 @@ fun parseLocator(raw: String): Locator {
         return xpath(raw)
     }
     return css(raw)
+}
+
+type UnsupportedSelector(val detail: String) : Throwable {
+    implement fun message(): String {
+        return this.detail
+    }
+}
+
+fun isNameChar(ch: String): Bool {
+    if (ch == "-" || ch == "_" || ch == "*") {
+        return true
+    }
+    if ("abcdefghijklmnopqrstuvwxyz".indexOf(ch) >= 0) {
+        return true
+    }
+    if ("ABCDEFGHIJKLMNOPQRSTUVWXYZ".indexOf(ch) >= 0) {
+        return true
+    }
+    if ("0123456789".indexOf(ch) >= 0) {
+        return true
+    }
+    return false
+}
+
+// One simple selector (tag, tag.class, tag#id, .class, #id, *) to an
+// XPath step. Exact class/id match; quotes and combinators refuse
+// (null) instead of generating a lying selector.
+fun cssStep(simple: String): String? {
+    if (simple == "") {
+        return null
+    }
+    var i = 0
+    while (i < simple.length) {
+        val ch = simple.substring(i, i + 1)
+        if (isNameChar(ch) == false && ch != "." && ch != "#") {
+            return null
+        }
+        i = i + 1
+    }
+    var tag = "*"
+    var rest = simple
+    if (simple.substring(0, 1) != "." && simple.substring(0, 1) != "#") {
+        var t = 0
+        while (t < simple.length && isNameChar(simple.substring(t, t + 1))) {
+            t = t + 1
+        }
+        tag = simple.substring(0, t)
+        rest = simple.substring(t, simple.length)
+        if (tag == "") {
+            return null
+        }
+    }
+    var step = tag
+    var r = 0
+    while (r < rest.length) {
+        val kind = rest.substring(r, r + 1)
+        var t = r + 1
+        while (t < rest.length && isNameChar(rest.substring(t, t + 1))) {
+            t = t + 1
+        }
+        val name = rest.substring(r + 1, t)
+        if (name == "") {
+            return null
+        }
+        if (kind == ".") {
+            step = step + "[@class='" + name + "']"
+        } else {
+            step = step + "[@id='" + name + "']"
+        }
+        r = t
+    }
+    return step
+}
+
+// A descendant chain ("a b c") to an absolute XPath. Null when any
+// link is outside the simple vocabulary.
+fun cssToXpath(selector: String): String? {
+    val chain = cssChain(selector)
+    if (chain == null) {
+        return null
+    }
+    return "//" + chain
+}
+
+// Child steps for within(): a css chain, or a /-rooted XPath used
+// verbatim (minus the leading slashes, which the base supplies).
+fun childSteps(child: String): String? {
+    if (child.indexOf("/") == 0) {
+        var rest = child
+        while (rest.indexOf("/") == 0) {
+            rest = rest.substring(1, rest.length)
+        }
+        if (rest == "") {
+            return null
+        }
+        return rest
+    }
+    return cssChain(child)
+}
+
+// Shared chain conversion; null on any unsupported link.
+fun cssChain(selector: String): String? {
+    var parts = ""
+    var count = 0
+    var rest = selector
+    var bad = false
+    while (rest != "" && bad == false) {
+        while (rest != "" && rest.substring(0, 1) == " ") {
+            rest = rest.substring(1, rest.length)
+        }
+        if (rest != "") {
+            var end = 0
+            while (end < rest.length && rest.substring(end, end + 1) != " ") {
+                end = end + 1
+            }
+            val step = cssStep(rest.substring(0, end))
+            if (step == null) {
+                bad = true
+            } else {
+                if (count > 0) {
+                    parts = parts + "//"
+                }
+                parts = parts + step
+                count = count + 1
+                rest = rest.substring(end, rest.length)
+            }
+        }
+    }
+    if (count == 0 || bad) {
+        return null
+    }
+    return parts
 }
